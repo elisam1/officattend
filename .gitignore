@@ -1,0 +1,16 @@
+node_modules/
+dist/
+.DS_Store
+*.log
+*.tmp
+*.cache
+.env
+.env.*
+.vscode/
+.idea/
+coverage/
+server/data.json
+public/models/
+public/vendor/opencv.js
+*.local
+Thumbs.db
