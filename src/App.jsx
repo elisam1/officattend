@@ -373,6 +373,7 @@ export default function App() {
                 continue
               }
               if (useBackend) { try { await recordAttendanceRemote(company.id, emp.id, 'in', now) } catch {} } else { recordAttendance(company.id, emp.id, 'in', now) }
+              await reloadToday()
               setStatus(`${emp.name} checked in at ${new Date(now).toLocaleTimeString()}`)
               setEvents(ev => [{ t: new Date().toLocaleTimeString(), msg: `Attendance recorded: ${emp.name} (Check-In)` }, ...ev].slice(0,50))
             } else {
@@ -382,6 +383,7 @@ export default function App() {
                 continue
               }
               if (useBackend) { try { await recordAttendanceRemote(company.id, emp.id, 'out', now) } catch {} } else { recordAttendance(company.id, emp.id, 'out', now) }
+              await reloadToday()
               setStatus(`${emp.name} checked out at ${new Date(now).toLocaleTimeString()}`)
               setEvents(ev => [{ t: new Date().toLocaleTimeString(), msg: `Departure recorded: ${emp.name} (Check-Out)` }, ...ev].slice(0,50))
             }
@@ -493,7 +495,7 @@ export default function App() {
           const emp = company.employees.find(e => e.id === info.empId)
           if (!emp) continue
           // Determine current record state for today
-          const todayRec = (today||[]).find(r => r.employeeId === emp.id)
+          const todayRec = (todayRows||[]).find(r => r.employeeId === emp.id)
           let alreadyIn = !!(todayRec && todayRec.checkIn)
           let alreadyOut = !!(todayRec && todayRec.checkOut)
           if (attendanceType === 'in') {
@@ -553,7 +555,27 @@ export default function App() {
   }, [company, modelsLoaded])
 
   const employees = company ? (company.employees || []) : []
-  const today = company ? listTodayAttendance(company.id) : []
+  const [todayRows, setTodayRows] = useState([])
+
+  useEffect(() => {
+    if (!company) { setTodayRows([]); return }
+    ;(async () => {
+      if (useBackend) {
+        try { const rows = await listTodayAttendanceRemote(company.id); setTodayRows(rows) } catch { setTodayRows([]) }
+      } else {
+        try { setTodayRows(listTodayAttendance(company.id)) } catch { setTodayRows([]) }
+      }
+    })()
+  }, [company, useBackend])
+
+  async function reloadToday() {
+    if (!company) return
+    if (useBackend) {
+      try { const rows = await listTodayAttendanceRemote(company.id); setTodayRows(rows) } catch {}
+    } else {
+      try { setTodayRows(listTodayAttendance(company.id)) } catch {}
+    }
+  }
 
   useEffect(() => {
     async function loadOrg() {
@@ -828,7 +850,7 @@ export default function App() {
                 </tr>
               </thead>
               <tbody>
-                {today.map(r => {
+                {todayRows.map(r => {
                   const emp = employees.find(e => e.id === r.employeeId)
                   return (
                     <tr key={r.id}>
@@ -838,7 +860,7 @@ export default function App() {
                     </tr>
                   )
                 })}
-                {today.length === 0 && (
+                {todayRows.length === 0 && (
                   <tr><td style={thtd} colSpan={3}>No records yet</td></tr>
                 )}
               </tbody>
@@ -849,7 +871,7 @@ export default function App() {
                   const url = csvUrl(company.id)
                   const a = document.createElement('a'); a.href = url; a.download = 'attendance_today.csv'; a.click()
                 } else {
-                  const rows = today.map(r => {
+                  const rows = todayRows.map(r => {
                     const emp = employees.find(e => e.id === r.employeeId)
                     return [r.date, emp?.name || r.employeeId, r.checkIn ? new Date(r.checkIn).toLocaleTimeString() : '', r.checkOut ? new Date(r.checkOut).toLocaleTimeString() : '']
                   })
@@ -1136,10 +1158,10 @@ export default function App() {
               <div>
                 <h4 style={{ margin: '0 0 8px' }}>Today status</h4>
                 {(() => {
-                  const present = today.filter(r => r.checkIn).length
-                  const late = today.filter(r => r.late).length
-                  const early = today.filter(r => r.earlyLeave).length
-                  const absent = today.filter(r => r.absent).length
+                  const present = todayRows.filter(r => r.checkIn).length
+                  const late = todayRows.filter(r => r.late).length
+                  const early = todayRows.filter(r => r.earlyLeave).length
+                  const absent = todayRows.filter(r => r.absent).length
                   const data = { labels: ['Present','Late','Early','Absent'], datasets: [{ label: 'Count', data: [present, late, early, absent], backgroundColor: ['#4caf50','#ff9800','#03a9f4','#f44336'] }] }
                   return <Bar data={data} options={{ responsive: true, plugins: { legend: { display: false } } }} />
                 })()}
