@@ -70,6 +70,12 @@ export function renameEmployee(companyId, empId, name) {
 export function deleteEmployee(companyId, empId) {
   const c = getCompany(companyId)
   if (!c) return false
+  const e = c.employees.find(x => x.id === empId)
+  if (e) {
+    for (const r of c.attendance) {
+      if (r.employeeId === empId && !r.employeeName) r.employeeName = e.name || null
+    }
+  }
   c.employees = c.employees.filter(x => x.id !== empId)
   updateCompany(c)
   return true
@@ -80,9 +86,12 @@ export function recordAttendance(companyId, employeeId, type, ts) {
   if (!c) return
   const date = new Date(ts).toISOString().slice(0,10)
   let rec = c.attendance.find(r => r.date === date && r.employeeId === employeeId)
+  const emp = c.employees.find(e => e.id === employeeId)
   if (!rec) {
-    rec = { id: crypto.randomUUID(), employeeId, date, checkIn: null, checkOut: null, late: false, earlyLeave: false, absent: false }
+    rec = { id: crypto.randomUUID(), employeeId, employeeName: emp?.name || null, date, checkIn: null, checkOut: null, late: false, earlyLeave: false, absent: false }
     c.attendance.push(rec)
+  } else {
+    if (!rec.employeeName && emp) rec.employeeName = emp.name
   }
   const sched = (c.settings && c.settings.schedule) || { checkInEnd: '10:00', checkOutStart: '16:00' }
   const toTs = (hhmm) => { const [h,m] = (hhmm||'00:00').split(':').map(Number); const d = new Date(date); d.setHours(h||0,m||0,0,0); return d.getTime() }
@@ -125,7 +134,7 @@ export function closeDayLocal(companyId, dateStr) {
   const existing = new Map(c.attendance.filter(r => r.date === date).map(r => [r.employeeId, r]))
   for (const e of c.employees) {
     const r = existing.get(e.id)
-    if (!r) c.attendance.push({ id: crypto.randomUUID(), employeeId: e.id, date, checkIn: null, checkOut: null, late: false, earlyLeave: false, absent: true })
+    if (!r) c.attendance.push({ id: crypto.randomUUID(), employeeId: e.id, employeeName: e.name || null, date, checkIn: null, checkOut: null, late: false, earlyLeave: false, absent: true })
     else if (!r.checkIn) r.absent = true
   }
   updateCompany(c)

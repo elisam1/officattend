@@ -168,6 +168,12 @@ app.delete('/company/:id/employees/:empId', authRequired, (req, res) => {
   const data = read()
   const c = getCompany(data, req.params.id)
   if (!c) return res.status(404).json({ error: 'not_found' })
+  const e = (c.employees||[]).find(x => x.id === req.params.empId)
+  if (e) {
+    for (const r of (c.attendance||[])) {
+      if (r.employeeId === e.id && !r.employeeName) r.employeeName = e.name || null
+    }
+  }
   c.employees = c.employees.filter(x => x.id !== req.params.empId)
   write(data)
   res.json({ ok: true })
@@ -199,9 +205,9 @@ app.post('/company/:id/attendance', (req, res) => {
   if (!c) return res.status(404).json({ error: 'not_found' })
   const date = new Date(ts || Date.now()).toISOString().slice(0,10)
   let rec = (c.attendance||[]).find(r => r.date === date && r.employeeId === employeeId)
-  if (!rec) { rec = { id: crypto.randomUUID(), employeeId, date, checkIn: null, checkOut: null, late: false, earlyLeave: false, absent: false }; c.attendance.push(rec) }
   let schedule = (c.settings&&c.settings.schedule) || { checkInEnd: '10:00', checkOutStart: '16:00' }
   const emp = (c.employees||[]).find(e => e.id === employeeId)
+  if (!rec) { rec = { id: crypto.randomUUID(), employeeId, employeeName: emp?.name || null, date, checkIn: null, checkOut: null, late: false, earlyLeave: false, absent: false }; c.attendance.push(rec) } else { if (!rec.employeeName && emp) rec.employeeName = emp.name }
   if (emp && emp.shiftId) {
     const sh = (c.shifts||[]).find(s => s.id === emp.shiftId)
     if (sh && sh.schedule) schedule = sh.schedule
@@ -253,7 +259,7 @@ app.get('/company/:id/attendance.csv', (req, res) => {
     const emp = c.employees.find(e => e.id === r.employeeId)
     return [
       r.date,
-      emp?.name || r.employeeId,
+      (r.employeeName || (emp?.name || r.employeeId)),
       r.checkIn ? fmtTime(r.checkIn) : '',
       r.checkOut ? fmtTime(r.checkOut) : '',
       r.late ? 'late' : '',
@@ -281,7 +287,7 @@ app.post('/company/:id/attendance/closeDay', authRequired, (req, res) => {
   for (const e of (c.employees||[])) {
     const r = existingByEmp.get(e.id)
     if (!r) {
-      c.attendance.push({ id: crypto.randomUUID(), employeeId: e.id, date, checkIn: null, checkOut: null, late: false, earlyLeave: false, absent: true })
+      c.attendance.push({ id: crypto.randomUUID(), employeeId: e.id, employeeName: e.name || null, date, checkIn: null, checkOut: null, late: false, earlyLeave: false, absent: true })
     } else if (!r.checkIn) {
       r.absent = true
     }

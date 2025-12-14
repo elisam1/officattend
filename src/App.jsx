@@ -305,12 +305,12 @@ export default function App() {
           let emp = null
           let statusTxt = 'Unknown Face'
           let distance = null
-          if (faceMatcher) {
+          if (faceMatcher && mode === 'attendance') {
             best = faceMatcher.findBestMatch(det.descriptor)
             if (best && best.label !== 'unknown') {
               emp = company?.employees?.find(e => e.id === best.label) || null
               distance = best.distance
-              const accept = distance < 0.55 // reduce false positives
+              const accept = distance < 0.6
               statusTxt = accept ? 'Recognized' : 'Unknown Face'
               if (!accept) { emp = null }
             }
@@ -356,42 +356,6 @@ export default function App() {
           }
         })
         setFaceInfos(infos)
-        // Immediately record attendance for recognized workers (no motion gating)
-        if (company && mode === 'attendance' && infos.length > 0) {
-          const now = Date.now()
-          const todayNow = useBackend ? null : listTodayAttendance(company.id)
-          for (const info of infos.filter(info => !!info.empId)) {
-            const emp = company.employees.find(e => e.id === info.empId)
-            if (!emp) continue
-            const todayRec = todayNow ? todayNow.find(r => r.employeeId === emp.id) : null
-            const alreadyIn = !!(todayRec && todayRec.checkIn)
-            const alreadyOut = !!(todayRec && todayRec.checkOut)
-            if (attendanceType === 'in') {
-              if (alreadyIn) {
-                setStatus(`Already checked in: ${emp.name}`)
-                setEvents(ev => [{ t: new Date().toLocaleTimeString(), msg: `Already checked in: ${emp.name}` }, ...ev].slice(0,50))
-                continue
-              }
-              if (useBackend) { try { await recordAttendanceRemote(company.id, emp.id, 'in', now) } catch {} } else { recordAttendance(company.id, emp.id, 'in', now) }
-              await reloadToday()
-              setStatus(`${emp.name} checked in at ${new Date(now).toLocaleTimeString()}`)
-              setEvents(ev => [{ t: new Date().toLocaleTimeString(), msg: `Attendance recorded: ${emp.name} (Check-In)` }, ...ev].slice(0,50))
-            } else {
-              if (alreadyOut) {
-                setStatus(`Already checked out: ${emp.name}`)
-                setEvents(ev => [{ t: new Date().toLocaleTimeString(), msg: `Already checked out: ${emp.name}` }, ...ev].slice(0,50))
-                continue
-              }
-              if (useBackend) { try { await recordAttendanceRemote(company.id, emp.id, 'out', now) } catch {} } else { recordAttendance(company.id, emp.id, 'out', now) }
-              await reloadToday()
-              setStatus(`${emp.name} checked out at ${new Date(now).toLocaleTimeString()}`)
-              setEvents(ev => [{ t: new Date().toLocaleTimeString(), msg: `Departure recorded: ${emp.name} (Check-Out)` }, ...ev].slice(0,50))
-            }
-            // brief pause to avoid multiple marks in quick succession
-            setRunning(false)
-            setTimeout(() => setRunning(true), 1500)
-          }
-        }
         if (mode === 'register' && resized.length > 0) {
           const det = resized[0]
           const box = det.detection.box
@@ -505,6 +469,7 @@ export default function App() {
               continue
             }
             if (useBackend) { try { await recordAttendanceRemote(company.id, emp.id, 'in', now) } catch {} } else { recordAttendance(company.id, emp.id, 'in', now) }
+            await reloadToday()
             setStatus(`${emp.name} checked in at ${new Date(now).toLocaleTimeString()}`)
             setEvents(ev => [{ t: new Date().toLocaleTimeString(), msg: `Attendance recorded: ${emp.name} (Check-In)` }, ...ev].slice(0,50))
           } else {
@@ -514,6 +479,7 @@ export default function App() {
               continue
             }
             if (useBackend) { try { await recordAttendanceRemote(company.id, emp.id, 'out', now) } catch {} } else { recordAttendance(company.id, emp.id, 'out', now) }
+            await reloadToday()
             setStatus(`${emp.name} checked out at ${new Date(now).toLocaleTimeString()}`)
             setEvents(ev => [{ t: new Date().toLocaleTimeString(), msg: `Departure recorded: ${emp.name} (Check-Out)` }, ...ev].slice(0,50))
           }
@@ -854,7 +820,7 @@ export default function App() {
                   const emp = employees.find(e => e.id === r.employeeId)
                   return (
                     <tr key={r.id}>
-                      <td style={thtd}>{emp?.name || r.employeeId}</td>
+                      <td style={thtd}>{r.employeeName || (emp?.name || r.employeeId)}</td>
                       <td style={thtd}>{r.checkIn ? new Date(r.checkIn).toLocaleTimeString() : '-'}</td>
                       <td style={thtd}>{r.checkOut ? new Date(r.checkOut).toLocaleTimeString() : '-'}</td>
                     </tr>
@@ -873,7 +839,7 @@ export default function App() {
                 } else {
                   const rows = todayRows.map(r => {
                     const emp = employees.find(e => e.id === r.employeeId)
-                    return [r.date, emp?.name || r.employeeId, r.checkIn ? new Date(r.checkIn).toLocaleTimeString() : '', r.checkOut ? new Date(r.checkOut).toLocaleTimeString() : '']
+                    return [r.date, (r.employeeName || (emp?.name || r.employeeId)), r.checkIn ? new Date(r.checkIn).toLocaleTimeString() : '', r.checkOut ? new Date(r.checkOut).toLocaleTimeString() : '']
                   })
                   const csv = [['Date','Name','CheckIn','CheckOut'], ...rows].map(row => row.map(v => '"' + String(v).replace(/"/g,'""') + '"').join(',')).join('\n')
                   const blob = new Blob([csv], { type: 'text/csv' })
@@ -1114,7 +1080,7 @@ export default function App() {
                 const a = document.createElement('a'); a.href = url; a.download = 'attendance.csv'; a.click()
               }}>Export CSV</button>
               <button style={secondaryBtnStyle} onClick={() => {
-                const html = `<!doctype html><html><head><title>Attendance</title><style>body{font-family:system-ui,Arial,sans-serif;padding:16px}table{border-collapse:collapse;width:100%}th,td{border:1px solid #ddd;padding:6px;font-size:12px}</style></head><body><h3>Attendance ${historyStart||''} ${historyEnd?(' - '+historyEnd):''}</h3><table><thead><tr><th>Date</th><th>Name</th><th>Check-in</th><th>Check-out</th><th>Late</th><th>Early</th><th>Absent</th></tr></thead><tbody>${historyRows.map(r=>{const emp=employees.find(e=>e.id===r.employeeId);return `<tr><td>${r.date}</td><td>${emp?.name||r.employeeId}</td><td>${r.checkIn?new Date(r.checkIn).toLocaleTimeString():''}</td><td>${r.checkOut?new Date(r.checkOut).toLocaleTimeString():''}</td><td>${r.late?'late':''}</td><td>${r.earlyLeave?'early':''}</td><td>${r.absent?'absent':''}</td></tr>`}).join('')}</tbody></table><script>window.print()</script></body></html>`
+                const html = `<!doctype html><html><head><title>Attendance</title><style>body{font-family:system-ui,Arial,sans-serif;padding:16px}table{border-collapse:collapse;width:100%}th,td{border:1px solid #ddd;padding:6px;font-size:12px}</style></head><body><h3>Attendance ${historyStart||''} ${historyEnd?(' - '+historyEnd):''}</h3><table><thead><tr><th>Date</th><th>Name</th><th>Check-in</th><th>Check-out</th><th>Late</th><th>Early</th><th>Absent</th></tr></thead><tbody>${historyRows.map(r=>{const emp=employees.find(e=>e.id===r.employeeId);return `<tr><td>${r.date}</td><td>${r.employeeName||(emp?.name||r.employeeId)}</td><td>${r.checkIn?new Date(r.checkIn).toLocaleTimeString():''}</td><td>${r.checkOut?new Date(r.checkOut).toLocaleTimeString():''}</td><td>${r.late?'late':''}</td><td>${r.earlyLeave?'early':''}</td><td>${r.absent?'absent':''}</td></tr>`}).join('')}</tbody></table><script>window.print()</script></body></html>`
                 const w = window.open('', '_blank'); if (w) { w.document.write(html); w.document.close() }
               }}>Print</button>
             </div>
@@ -1136,7 +1102,7 @@ export default function App() {
                   return (
                     <tr key={r.id}>
                       <td style={thtd}>{r.date}</td>
-                      <td style={thtd}>{emp?.name || r.employeeId}</td>
+                      <td style={thtd}>{r.employeeName || (emp?.name || r.employeeId)}</td>
                       <td style={thtd}>{r.checkIn ? new Date(r.checkIn).toLocaleTimeString() : '-'}</td>
                       <td style={thtd}>{r.checkOut ? new Date(r.checkOut).toLocaleTimeString() : '-'}</td>
                       <td style={thtd}>{r.late ? 'late' : ''}</td>
