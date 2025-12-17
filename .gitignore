@@ -14,3 +14,10 @@ public/models/
 public/vendor/opencv.js
 *.local
 Thumbs.db
+
+# Build outputs
+release/
+officattend-dist/
+*.zip
+*.exe
+*.blockmap

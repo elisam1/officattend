@@ -2,15 +2,20 @@ import express from 'express'
 import cors from 'cors'
 import fs from 'fs'
 import path from 'path'
+import { fileURLToPath } from 'url'
 import crypto from 'crypto'
 import bcrypt from 'bcryptjs'
 import jwt from 'jsonwebtoken'
+
+const __filename = fileURLToPath(import.meta.url)
+const __dirname = path.dirname(__filename)
 
 const app = express()
 app.use(cors())
 app.use(express.json({ limit: '2mb' }))
 
-const DATA_PATH = path.join(process.cwd(), 'server', 'data.json')
+// Data path - use server folder for data storage
+const DATA_PATH = path.join(__dirname, 'data.json')
 const JWT_SECRET = process.env.JWT_SECRET || 'dev-secret'
 
 function read() {
@@ -323,3 +328,6 @@ app.delete('/company/:id/shifts/:shiftId', authRequired, (req, res) => {
   const data = read(); const c = getCompany(data, req.params.id); if (!c) return res.status(404).json({ error:'not_found' });
   c.shifts = (c.shifts||[]).filter(s => s.id !== req.params.shiftId); write(data); res.json({ ok:true })
 })
+
+const PORT = process.env.PORT || 3001
+app.listen(PORT, () => console.log(`Server running on port ${PORT}`))

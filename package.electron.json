@@ -1,21 +1,19 @@
 {
-  "name": "officattend",
+  "name": "officattend-electron",
   "version": "1.0.0",
-  "description": "Face Recognition Attendance Tracking System",
-  "private": true,
-  "type": "module",
-  "main": "electron/main.cjs",
+  "description": "OfficAttend - Face Recognition Attendance Tracking System",
+  "main": "electron/main.js",
+  "author": "OfficAttend",
+  "license": "MIT",
   "scripts": {
     "start": "concurrently \"npm run server\" \"npm run dev\"",
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview",
-    "fetch-models": "node scripts/fetch-models.cjs",
     "server": "node server/index.js",
-    "package": "node scripts/package-dist.cjs",
     "electron": "electron .",
-    "electron:dev": "set NODE_ENV=development&& electron .",
-    "electron:build": "node scripts/build-electron.cjs"
+    "electron:dev": "set NODE_ENV=development && electron .",
+    "electron:build": "npm run build && electron-builder",
+    "package": "node scripts/package-dist.cjs"
   },
   "build": {
     "appId": "com.officattend.app",
@@ -46,9 +44,7 @@
       "target": [
         {
           "target": "nsis",
-          "arch": [
-            "x64"
-          ]
+          "arch": ["x64"]
         }
       ],
       "icon": "electron/icon.ico"
@@ -79,8 +75,8 @@
     "react-dom": "^18.3.1"
   },
   "devDependencies": {
-    "electron": "^28.3.3",
-    "electron-builder": "^24.13.3",
+    "electron": "^28.0.0",
+    "electron-builder": "^24.9.1",
     "vite": "^5.4.0"
   }
 }

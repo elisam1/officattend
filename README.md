@@ -1,15 +1,38 @@
-# Officattend
+# OfficAttend
 
-A lightweight face-recognition attendance tracker with a React frontend and a simple Express JSON API backend. It supports local mode (no server) and backend mode for multi-user environments and CSV exports.
+A lightweight face-recognition attendance tracking system with a React frontend and Express.js backend. Supports both local storage mode (browser-only) and backend mode for multi-user environments with CSV exports.
 
 ## Features
-- Real-time face detection and recognition using `face-api.js`.
-- Optional OpenCV-based motion and blur checks for liveness and quality.
-- Register employees by capturing a face descriptor.
-- Mark attendance (check-in/check-out) automatically when recognized.
-- Local storage mode and backend mode (REST API) with identical UI.
-- CSV export for today or custom date ranges.
-- Basic charts and logs for activity visualization.
+
+### Face Recognition
+- Real-time face detection using `face-api.js` (TinyFaceDetector or SSD Mobilenet)
+- **75% confidence threshold** required for attendance recording (configurable)
+- Face descriptor storage per employee for recognition
+- Visual feedback showing match confidence percentage
+
+### Attendance Tracking
+- Automatic check-in/check-out when recognized face is detected
+- Late arrival and early departure tracking based on configurable schedules
+- Absence marking with "Close Day" feature
+- History view with date range filtering
+
+### Organization Features
+- Department and shift management (backend mode)
+- Per-shift schedule configuration
+- Employee management (add, rename, delete)
+- Admin authentication with JWT tokens
+
+### Data & Export
+- CSV export for today or custom date ranges
+- Dashboard with attendance charts (present, late, early, absent)
+- Printable attendance reports
+- Local storage mode for offline use
+
+### Quality Controls
+- OpenCV-based motion detection to prevent duplicate marks
+- Blur and lighting checks during face registration
+- Face alignment validation for optimal capture
+- 1.5-second cooldown between attendance marks
 
 ## Requirements
 - Node.js 18+
@@ -23,7 +46,7 @@ npm install
 ```
 
 ### 2) Fetch model weights (optional)
-If you don’t already have the models in `public/models/`, run:
+If you don't already have the models in `public/models/`, run:
 ```bash
 npm run fetch-models
 ```
@@ -35,7 +58,7 @@ If you want server-backed storage and CSV export:
 npm run server
 ```
 - API runs at `http://localhost:3001`.
-- Data persists to `server/data.json` (ignored by git).
+- Data persists to `server/data.json`.
 
 ### 4) Start the frontend
 ```bash
@@ -47,59 +70,148 @@ npm run dev
 The app auto-detects backend availability via `/health`. If the backend is running, it will switch to server-backed data for company, employees, and attendance.
 
 ## How It Works
-- Face detection: `TinyFaceDetector` by default, SSD Mobilenet if available.
-- Recognition: face descriptors stored per-employee and matched with `FaceMatcher`.
-- Attendance logic: When a recognized face appears in attendance mode, the app records `checkIn` or `checkOut` depending on the selected type and today’s record state.
-- Motion gating: OpenCV frame differencing reduces spurious marks by requiring visible motion.
+
+### Face Detection & Recognition
+1. **Detection**: TinyFaceDetector (default) or SSD Mobilenet scans each video frame
+2. **Descriptor Extraction**: 128-dimension face descriptor computed for each detected face
+3. **Matching**: FaceMatcher compares descriptor against registered employees
+4. **Confidence Check**: Match confidence = `(1 - distance) × 100`. Must be ≥75% to record attendance
+
+### Attendance Logic
+- When a recognized face appears in attendance mode with ≥75% confidence:
+  - **Check-in mode**: Records check-in time if not already checked in
+  - **Check-out mode**: Records check-out time if not already checked out
+- Late/early status calculated against configurable schedule times
+- Motion detection prevents accidental duplicate marks
+
+## API Endpoints
+
+### Company & Auth
+- `POST /setup/company` — Create company with first admin
+- `POST /auth/login` — Admin login (returns JWT)
+- `GET /company/:id` — Get company details
+
+### Employees
+- `GET /company/:id/employees` — List employees
+- `POST /company/:id/employees` — Add employee with face descriptor
+- `PUT /company/:id/employees/:empId` — Update employee (auth required)
+- `DELETE /company/:id/employees/:empId` — Delete employee (auth required)
+
+### Attendance
+- `GET /company/:id/attendance/today` — Today's attendance
+- `GET /company/:id/attendance?start=&end=` — Attendance range
+- `POST /company/:id/attendance` — Record attendance
+- `POST /company/:id/attendance/closeDay` — Mark absentees (auth required)
+- `GET /company/:id/attendance.csv` — CSV export
+
+### Organization
+- `GET/POST/DELETE /company/:id/departments` — Department CRUD
+- `GET/POST/DELETE /company/:id/shifts` — Shift CRUD
 
 ## CSV Export
-The backend exposes a CSV endpoint:
-- Today: `GET /company/:id/attendance.csv`
-- Range: `GET /company/:id/attendance.csv?start=YYYY-MM-DD&end=YYYY-MM-DD`
+
+Endpoint: `GET /company/:id/attendance.csv?start=YYYY-MM-DD&end=YYYY-MM-DD`
 
 Columns:
-- `Date` (`YYYY-MM-DD`)
-- `Name`
-- `CheckIn` (`HH:MM:SS`)
-- `CheckOut` (`HH:MM:SS`)
-- `Late` (`late` or empty)
-- `EarlyLeave` (`early` or empty)
-- `Absent` (`absent` or empty)
-
-Tip: If your spreadsheet shows `#####`, widen the column or ensure the cell format is set to text/time. The API uses stable ASCII time strings to avoid locale-specific hashes.
+| Column | Description |
+|--------|-------------|
+| Date | `YYYY-MM-DD` |
+| Name | Employee name |
+| CheckIn | `HH:MM:SS` |
+| CheckOut | `HH:MM:SS` |
+| Late | `late` or empty |
+| EarlyLeave | `early` or empty |
+| Absent | `absent` or empty |
 
 ## Project Structure
 ```
-public/            # static assets
-  models/         # face-api.js weights (optional, can use CDN)
-  vendor/opencv.js# OpenCV (optional)
-server/            # Express API
-  index.js        # API routes
-  data.json       # persisted data (git-ignored)
-src/               # React app
-  App.jsx         # main application
-  api.js          # backend client
-  store.js        # local storage adapter
-  snackbar.jsx    # notifications
-  main.jsx        # React root
+public/
+  models/           # face-api.js weights (optional, can use CDN)
+  vendor/opencv.js  # OpenCV (optional)
+server/
+  index.js          # Express API routes
+  data.json         # Persisted data
+src/
+  App.jsx           # Main React application
+  api.js            # Backend API client
+  store.js          # Local storage adapter
+  snackbar.jsx      # Toast notifications
+  main.jsx          # React entry point
+scripts/
+  fetch-models.cjs  # Model download script
 ```
 
 ## Scripts
-- `npm run dev` — start Vite dev server.
-- `npm run build` — build production bundle.
-- `npm run preview` — preview built bundle.
-- `npm run fetch-models` — download face-api.js weights into `public/models/`.
-- `npm run server` — start the Express backend.
+| Command | Description |
+|---------|-------------|
+| `npm run dev` | Start Vite dev server |
+| `npm run build` | Build production bundle |
+| `npm run preview` | Preview built bundle |
+| `npm run fetch-models` | Download face-api.js weights |
+| `npm run server` | Start Express backend |
+| `npm run start` | Start both server and frontend |
+| `npm run electron:dev` | Run app in Electron (dev mode) |
+| `npm run electron:build` | Build Windows installer |
 
-## Configuration Notes
-- Backend base URL is `http://localhost:3001` (`src/api.js`). Adjust if you deploy elsewhere.
-- Models expected in `/models` at runtime. The app falls back to CDN if local weights are missing.
-- CSV URL helper is `csvUrl(companyId, start?, end?)` from `src/api.js`.
+## Desktop Application (Electron)
+
+OfficAttend can be packaged as a standalone Windows desktop application that doesn't require Node.js to be installed on end-user machines.
+
+### Building the Installer
+
+1. Install dependencies (if not done):
+   ```bash
+   npm install
+   ```
+
+2. Build the Electron app:
+   ```bash
+   npm run electron:build
+   ```
+
+3. Find the installer in `release/OfficAttend Setup 1.0.0.exe` (~83 MB)
+
+### What the Installer Includes
+- Complete Electron runtime (no Node.js required on target machine)
+- Built React frontend
+- Express.js backend server (starts automatically)
+- All face recognition models
+- OpenCV.js for motion detection
+
+### Distribution
+Share the `OfficAttend Setup 1.0.0.exe` file with users. They can:
+1. Double-click to run the installer
+2. Choose installation directory
+3. Launch from desktop shortcut or Start Menu
+
+### How It Works
+The Electron app:
+1. Starts the Express backend server automatically on port 3001
+2. Opens a browser window pointing to the built frontend
+3. Shows a loading screen while initializing
+4. Runs in system tray when minimized (optional)
+
+## Configuration
+
+### Confidence Threshold
+The face match confidence threshold is set to **75%** in `src/App.jsx`. To adjust:
+- Find `matchConfidence >= 75` and change the value
+- Lower = more lenient matching (may cause false positives)
+- Higher = stricter matching (may miss valid matches)
+
+### Schedule Settings
+Default schedule (adjustable in Admin panel):
+- Check-in deadline: 10:00 AM
+- Check-out start: 4:00 PM
+
+### Backend URL
+Backend base URL is `http://localhost:3001` in `src/api.js`. Adjust for deployment.
 
 ## Development Tips
-- If models fail to load, ensure files exist under `public/models/` or run `npm run fetch-models`.
-- Camera permissions are required. If the default `facingMode:'user'` fails, the app will try a generic camera and then enumerate devices.
-- For recognition quality, capture a clear, front-facing face in good lighting when registering employees.
+- **Models not loading?** Run `npm run fetch-models` or check `public/models/`
+- **Camera issues?** Ensure camera permissions. App tries multiple fallback methods.
+- **Recognition quality?** Register faces in good lighting, front-facing, with minimal motion
+- **Check browser console** (F12) for detailed logging during attendance recording
 
 ## License
 This project is intended as an internal demo template. Add a license if you plan to open source.
