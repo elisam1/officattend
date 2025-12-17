@@ -49,6 +49,76 @@ export default function App() {
   const [captureReady, setCaptureReady] = useState(false)
   const [captureMsg, setCaptureMsg] = useState('')
   const [pendingDescriptor, setPendingDescriptor] = useState(null)
+  const [theme, setTheme] = useState('dark')
+  // Refs to hold current values for the recognition loop
+  const companyRef = useRef(null)
+  const modeRef = useRef('attendance')
+  const attendanceTypeRef = useRef('in')
+  const todayRowsRef = useRef([])
+  const useBackendRef = useRef(false)
+  const faceMatcherRef = useRef(null)
+  const palette = useMemo(() => {
+    if (theme === 'dark') {
+      return {
+        bg: '#0b1220',
+        headerBg: '#0f172a',
+        card: '#0f172a',
+        border: '#1f2937',
+        text: '#e5e7eb',
+        muted: '#9ca3af',
+        primary: '#2563eb',
+        primaryText: '#ffffff',
+        buttonBg: '#111827',
+        buttonBorder: '#334155',
+        accentBg: '#0b1220',
+        accentActiveBg: '#1e293b'
+      }
+    }
+    return {
+      bg: '#f8fafc',
+      headerBg: '#ffffff',
+      card: '#ffffff',
+      border: '#e5e7eb',
+      text: '#1f2937',
+      muted: '#64748b',
+      primary: '#2563eb',
+      primaryText: '#ffffff',
+      buttonBg: '#ffffff',
+      buttonBorder: '#d1d5db',
+      accentBg: '#ffffff',
+      accentActiveBg: '#eef2ff'
+    }
+  }, [theme])
+
+  function btnStyle(active) {
+    return {
+      padding: '8px 12px',
+      borderRadius: 6,
+      border: `1px solid ${palette.buttonBorder}`,
+      background: active ? palette.accentActiveBg : palette.accentBg,
+      color: palette.text,
+      cursor: 'pointer'
+    }
+  }
+  const primaryBtnStyle = {
+    padding: '10px 14px',
+    borderRadius: 6,
+    border: `1px solid ${palette.primary}`,
+    background: palette.primary,
+    color: palette.primaryText,
+    cursor: 'pointer'
+  }
+  const secondaryBtnStyle = {
+    padding: '10px 14px',
+    borderRadius: 6,
+    border: `1px solid ${palette.buttonBorder}`,
+    background: palette.buttonBg,
+    color: palette.text,
+    cursor: 'pointer'
+  }
+  const thtd = {
+    border: `1px solid ${palette.border}`, padding: '8px 10px', textAlign: 'left'
+  }
   
 
   // Safely obtain a ready HTMLVideoElement for face-api input
@@ -297,6 +367,10 @@ export default function App() {
         const ctx = canvas.getContext('2d')
         ctx.clearRect(0, 0, canvas.width, canvas.height)
         const infos = []
+        // Use refs to get current values in the loop
+        const currentCompany = companyRef.current
+        const currentMode = modeRef.current
+        const currentFaceMatcher = faceMatcherRef.current
         // Build per-face info cards and draw overlays
         resized.forEach((det,i) => {
           const box = det.detection.box
@@ -305,14 +379,17 @@ export default function App() {
           let emp = null
           let statusTxt = 'Unknown Face'
           let distance = null
-          if (faceMatcher && mode === 'attendance') {
-            best = faceMatcher.findBestMatch(det.descriptor)
+          let matchConfidence = 0
+          if (currentFaceMatcher && currentMode === 'attendance') {
+            best = currentFaceMatcher.findBestMatch(det.descriptor)
             if (best && best.label !== 'unknown') {
-              emp = company?.employees?.find(e => e.id === best.label) || null
+              emp = currentCompany?.employees?.find(e => e.id === best.label) || null
               distance = best.distance
-              const accept = distance < 0.6
-              statusTxt = accept ? 'Recognized' : 'Unknown Face'
-              if (!accept) { emp = null }
+              // Match confidence: 75% required to record attendance
+              // confidence = (1 - distance) * 100
+              matchConfidence = Math.round((1 - distance) * 100)
+              const accept = matchConfidence >= 75
+              statusTxt = emp ? (accept ? `Recognized (${matchConfidence}%)` : `${emp.name} - ${matchConfidence}% (need 75%+)`) : 'Unknown Face'
             }
           }
           infos.push({
@@ -324,10 +401,11 @@ export default function App() {
             empId: emp ? emp.id : null,
             status: statusTxt,
             distance,
+            matchConfidence,
             time: new Date().toLocaleTimeString(),
           })
-          // Draw rounded box
-          const color = emp ? 'lime' : 'orange'
+          // Draw rounded box - green if 75%+, orange otherwise
+          const color = (emp && matchConfidence >= 75) ? 'lime' : 'orange'
           ctx.strokeStyle = color
           ctx.lineWidth = 3
           const radius = 8
@@ -450,42 +528,89 @@ export default function App() {
         } else {
           // Attendance mode overlays already handled above
         }
-      }
-      // Auto mark attendance when in attendance mode (handle multiple faces)
-      if (company && mode === 'attendance' && detections.length > 0 && motionRef.current) {
-        const now = Date.now()
-        for (const info of faceInfos) {
-          if (!info.empId) continue
-          const emp = company.employees.find(e => e.id === info.empId)
-          if (!emp) continue
-          // Determine current record state for today
-          const todayRec = (todayRows||[]).find(r => r.employeeId === emp.id)
-          let alreadyIn = !!(todayRec && todayRec.checkIn)
-          let alreadyOut = !!(todayRec && todayRec.checkOut)
-          if (attendanceType === 'in') {
-            if (alreadyIn) {
-              setStatus(`Already checked in: ${emp.name}`)
-              setEvents(ev => [{ t: new Date().toLocaleTimeString(), msg: `Already checked in: ${emp.name}` }, ...ev].slice(0,50))
+        // Auto mark attendance when in attendance mode (handle multiple faces)
+        // IMPORTANT: Use refs to get current values
+        const currentTodayRows = todayRowsRef.current
+        const currentAttendanceType = attendanceTypeRef.current
+        const currentUseBackend = useBackendRef.current
+        if (currentCompany && currentMode === 'attendance' && infos && infos.length > 0) {
+          console.log('Attendance check - infos:', infos.length, 'motion:', motionRef.current)
+          const now = Date.now()
+          for (const info of infos) {
+            console.log('Processing face:', info.label, 'empId:', info.empId, 'confidence:', info.matchConfidence)
+            if (!info.empId) {
+              console.log('Skipping - no empId')
               continue
             }
-            if (useBackend) { try { await recordAttendanceRemote(company.id, emp.id, 'in', now) } catch {} } else { recordAttendance(company.id, emp.id, 'in', now) }
-            await reloadToday()
-            setStatus(`${emp.name} checked in at ${new Date(now).toLocaleTimeString()}`)
-            setEvents(ev => [{ t: new Date().toLocaleTimeString(), msg: `Attendance recorded: ${emp.name} (Check-In)` }, ...ev].slice(0,50))
-          } else {
-            if (alreadyOut) {
-              setStatus(`Already checked out: ${emp.name}`)
-              setEvents(ev => [{ t: new Date().toLocaleTimeString(), msg: `Already checked out: ${emp.name}` }, ...ev].slice(0,50))
+            // Only record attendance if match confidence is >= 75%
+            if (info.matchConfidence < 75) {
+              setStatus(`${info.label}: confidence ${info.matchConfidence}% (need 75%+)`)
+              console.log('Skipping - low confidence:', info.matchConfidence)
               continue
             }
-            if (useBackend) { try { await recordAttendanceRemote(company.id, emp.id, 'out', now) } catch {} } else { recordAttendance(company.id, emp.id, 'out', now) }
-            await reloadToday()
-            setStatus(`${emp.name} checked out at ${new Date(now).toLocaleTimeString()}`)
-            setEvents(ev => [{ t: new Date().toLocaleTimeString(), msg: `Departure recorded: ${emp.name} (Check-Out)` }, ...ev].slice(0,50))
+            const emp = currentCompany.employees.find(e => e.id === info.empId)
+            if (!emp) {
+              console.log('Skipping - employee not found')
+              continue
+            }
+            // Determine current record state for today
+            const todayRec = (currentTodayRows||[]).find(r => r.employeeId === emp.id)
+            let alreadyIn = !!(todayRec && todayRec.checkIn)
+            let alreadyOut = !!(todayRec && todayRec.checkOut)
+            console.log('Employee found:', emp.name, 'alreadyIn:', alreadyIn, 'alreadyOut:', alreadyOut, 'attendanceType:', currentAttendanceType)
+            if (currentAttendanceType === 'in') {
+              if (alreadyIn) {
+                setStatus(`Already checked in: ${emp.name}`)
+                setEvents(ev => [{ t: new Date().toLocaleTimeString(), msg: `Already checked in: ${emp.name}` }, ...ev].slice(0,50))
+                continue
+              }
+              try {
+                console.log('Recording check-in for:', emp.name, 'backend:', currentUseBackend)
+                if (currentUseBackend) {
+                  const result = await recordAttendanceRemote(currentCompany.id, emp.id, 'in', now)
+                  console.log('Check-in result:', result)
+                } else {
+                  const result = recordAttendance(currentCompany.id, emp.id, 'in', now)
+                  console.log('Check-in result (local):', result)
+                }
+                await reloadToday()
+                setStatus(`${emp.name} checked in at ${new Date(now).toLocaleTimeString()}`)
+                setEvents(ev => [{ t: new Date().toLocaleTimeString(), msg: `Attendance recorded: ${emp.name} (Check-In)` }, ...ev].slice(0,50))
+                pushSnack(`${emp.name} checked in`, 'success')
+              } catch (err) {
+                console.error('Check-in failed:', err)
+                setStatus(`Check-in failed for ${emp.name}`)
+                pushSnack(`Check-in failed: ${err.message}`, 'error')
+              }
+            } else {
+              if (alreadyOut) {
+                setStatus(`Already checked out: ${emp.name}`)
+                setEvents(ev => [{ t: new Date().toLocaleTimeString(), msg: `Already checked out: ${emp.name}` }, ...ev].slice(0,50))
+                continue
+              }
+              try {
+                console.log('Recording check-out for:', emp.name, 'backend:', currentUseBackend)
+                if (currentUseBackend) {
+                  const result = await recordAttendanceRemote(currentCompany.id, emp.id, 'out', now)
+                  console.log('Check-out result:', result)
+                } else {
+                  const result = recordAttendance(currentCompany.id, emp.id, 'out', now)
+                  console.log('Check-out result (local):', result)
+                }
+                await reloadToday()
+                setStatus(`${emp.name} checked out at ${new Date(now).toLocaleTimeString()}`)
+                setEvents(ev => [{ t: new Date().toLocaleTimeString(), msg: `Departure recorded: ${emp.name} (Check-Out)` }, ...ev].slice(0,50))
+                pushSnack(`${emp.name} checked out`, 'success')
+              } catch (err) {
+                console.error('Check-out failed:', err)
+                setStatus(`Check-out failed for ${emp.name}`)
+                pushSnack(`Check-out failed: ${err.message}`, 'error')
+              }
+            }
+            // brief pause to avoid multiple marks
+            setRunning(false)
+            setTimeout(() => setRunning(true), 1500)
           }
-          // brief pause to avoid multiple marks
-          setRunning(false)
-          setTimeout(() => setRunning(true), 1500)
         }
       }
       rafId = requestAnimationFrame(loop)
@@ -514,14 +639,23 @@ export default function App() {
   const faceMatcher = useMemo(() => {
     if (!company || !modelsLoaded) return null
     const labeled = company.employees
-      .filter(e => Array.isArray(e.descriptor))
+      .filter(e => Array.isArray(e.descriptor) && e.descriptor.length === 128)
       .map(e => new faceapi.LabeledFaceDescriptors(e.id, [new Float32Array(e.descriptor)]))
     if (!labeled.length) return null
+    // Threshold 0.6 for initial matching, but we require 80% confidence (distance < 0.2) to record
     return new faceapi.FaceMatcher(labeled, 0.6)
   }, [company, modelsLoaded])
 
   const employees = company ? (company.employees || []) : []
   const [todayRows, setTodayRows] = useState([])
+
+  // Keep refs updated for the recognition loop
+  useEffect(() => { companyRef.current = company }, [company])
+  useEffect(() => { modeRef.current = mode }, [mode])
+  useEffect(() => { attendanceTypeRef.current = attendanceType }, [attendanceType])
+  useEffect(() => { todayRowsRef.current = todayRows }, [todayRows])
+  useEffect(() => { useBackendRef.current = useBackend }, [useBackend])
+  useEffect(() => { faceMatcherRef.current = faceMatcher }, [faceMatcher])
 
   useEffect(() => {
     if (!company) { setTodayRows([]); return }
@@ -535,11 +669,25 @@ export default function App() {
   }, [company, useBackend])
 
   async function reloadToday() {
-    if (!company) return
-    if (useBackend) {
-      try { const rows = await listTodayAttendanceRemote(company.id); setTodayRows(rows) } catch {}
+    const currentCompany = companyRef.current
+    const currentUseBackend = useBackendRef.current
+    if (!currentCompany) return
+    if (currentUseBackend) {
+      try { 
+        const rows = await listTodayAttendanceRemote(currentCompany.id)
+        setTodayRows(rows)
+        console.log('Reloaded today attendance:', rows)
+      } catch (err) {
+        console.error('Failed to reload today:', err)
+      }
     } else {
-      try { setTodayRows(listTodayAttendance(company.id)) } catch {}
+      try { 
+        const rows = listTodayAttendance(currentCompany.id)
+        setTodayRows(rows)
+        console.log('Reloaded today attendance (local):', rows)
+      } catch (err) {
+        console.error('Failed to reload today (local):', err)
+      }
     }
   }
 
@@ -591,7 +739,7 @@ export default function App() {
 
   if (!company) {
     return (
-      <Onboarding useBackend={useBackend} setUseBackend={setUseBackend} onCreated={async (payload) => {
+      <Onboarding useBackend={useBackend} setUseBackend={setUseBackend} secondaryBtnStyle={secondaryBtnStyle} primaryBtnStyle={primaryBtnStyle} palette={palette} onCreated={async (payload) => {
         let c
         if (useBackend) {
           c = await createCompanyRemote(payload.name, payload.admin)
@@ -619,8 +767,8 @@ export default function App() {
   }
 
   return (
-    <div style={{ display: 'grid', gridTemplateRows: 'auto 1fr', minHeight: '100vh' }}>
-      <header style={{ padding: '12px 16px', borderBottom: '1px solid #eee', display: 'flex', gap: 12, alignItems: 'center' }}>
+    <div style={{ display: 'grid', gridTemplateRows: 'auto 1fr', minHeight: '100vh', background: palette.bg, color: palette.text }}>
+      <header style={{ padding: '12px 16px', borderBottom: `1px solid ${palette.border}`, background: palette.headerBg, display: 'flex', gap: 12, alignItems: 'center' }}>
         <h1 style={{ margin: 0, fontSize: 18 }}>OfficAttend</h1>
         <nav style={{ display: 'flex', gap: 8 }}>
           <button onClick={() => setMode('attendance')} style={btnStyle(mode === 'attendance')}>Attendance</button>
@@ -633,8 +781,9 @@ export default function App() {
           <button onClick={() => setMode('admin')} style={btnStyle(mode === 'admin')}>Admin</button>
         </nav>
         <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8 }}>
-          <div style={{ fontSize: 13, color: '#666' }}>{status}</div>
-          <button onClick={handleLogout} style={{ padding: '6px 10px', borderRadius: 6, border: '1px solid #ddd', background: '#fafafa' }}>Logout</button>
+          <button onClick={() => setTheme(t => t === 'dark' ? 'light' : 'dark')} style={secondaryBtnStyle}>{theme === 'dark' ? 'Light' : 'Dark'} Mode</button>
+          <div style={{ fontSize: 13, color: palette.muted }}>{status}</div>
+          <button onClick={handleLogout} style={secondaryBtnStyle}>Logout</button>
         </div>
       </header>
       <main style={{ display: 'grid', placeItems: 'center', padding: 16, gap: 16 }}>
@@ -645,48 +794,48 @@ export default function App() {
               <canvas ref={canvasRef} width={720} height={405} style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', borderRadius: 8, pointerEvents: 'none', zIndex: 2 }} />
             </div>
             <div style={{ display: 'grid', gap: 8 }}>
-              <div style={{ padding: 10, border: '1px solid #eee', borderRadius: 8 }}>
-                <div style={{ fontSize: 13, color: '#555' }}>Status</div>
+              <div style={{ padding: 10, border: `1px solid ${palette.border}`, borderRadius: 8, background: palette.card }}>
+                <div style={{ fontSize: 13, color: palette.muted }}>Status</div>
                 <div style={{ fontSize: 14 }}>{status}</div>
-                <div style={{ display: 'flex', gap: 8, fontSize: 12, color: '#666' }}>
+                <div style={{ display: 'flex', gap: 8, fontSize: 12, color: palette.muted }}>
                   <div>Now: {nowStr}</div>
                   <div>FPS: {fps}</div>
                   <div>Faces: {faceInfos.length}</div>
                 </div>
               </div>
-              <div style={{ padding: 10, border: '1px solid #eee', borderRadius: 8 }}>
+              <div style={{ padding: 10, border: `1px solid ${palette.border}`, borderRadius: 8, background: palette.card }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems:'center' }}>
-                  <div style={{ fontSize: 13, color: '#555' }}>Detected Faces</div>
+                  <div style={{ fontSize: 13, color: palette.muted }}>Detected Faces</div>
                   <label style={{ fontSize: 12, display: 'flex', gap: 6, alignItems: 'center' }}>
                     <input type="checkbox" checked={showLandmarks} onChange={e => setShowLandmarks(e.target.checked)} /> Landmarks
                   </label>
                 </div>
                 <div style={{ display: 'grid', gap: 8 }}>
-                  {faceInfos.length === 0 && <div style={{ fontSize: 12, color: '#888' }}>No face detected</div>}
+                  {faceInfos.length === 0 && <div style={{ fontSize: 12, color: palette.muted }}>No face detected</div>}
                   {faceInfos.map(info => (
-                    <div key={info.i} style={{ border: '1px solid #eee', borderRadius: 8, padding: 8 }}>
+                    <div key={info.i} style={{ border: `1px solid ${palette.border}`, borderRadius: 8, padding: 8, background: palette.card }}>
                       <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                         <div style={{ fontSize: 14, fontWeight: 600 }}>{info.status}</div>
-                        <div style={{ fontSize: 12, color: '#666' }}>{info.time}</div>
+                        <div style={{ fontSize: 12, color: palette.muted }}>{info.time}</div>
                       </div>
-                      <div style={{ fontSize: 12, color: '#333' }}>
+                      <div style={{ fontSize: 12 }}>
                         Confidence: {info.score}% {info.distance != null ? `• Match: ${(1 - info.distance).toFixed(2)}` : ''}
                       </div>
                       {info.empId ? (
-                        <div style={{ fontSize: 12, color: '#333' }}>Employee: {info.label} • ID: {info.empId}</div>
+                        <div style={{ fontSize: 12 }}>Employee: {info.label} • ID: {info.empId}</div>
                       ) : (
-                        <div style={{ fontSize: 12, color: '#888' }}>Label: unknown</div>
+                        <div style={{ fontSize: 12, color: palette.muted }}>Label: unknown</div>
                       )}
                     </div>
                   ))}
                 </div>
               </div>
-              <div style={{ padding: 10, border: '1px solid #eee', borderRadius: 8 }}>
-                <div style={{ fontSize: 13, color: '#555', marginBottom: 6 }}>Logs</div>
+              <div style={{ padding: 10, border: `1px solid ${palette.border}`, borderRadius: 8, background: palette.card }}>
+                <div style={{ fontSize: 13, color: palette.muted, marginBottom: 6 }}>Logs</div>
                 <div style={{ display: 'grid', gap: 6 }}>
-                  {events.length === 0 && <div style={{ fontSize: 12, color: '#888' }}>No events yet</div>}
+                  {events.length === 0 && <div style={{ fontSize: 12, color: palette.muted }}>No events yet</div>}
                   {events.map((e,idx) => (
-                    <div key={idx} style={{ fontSize: 12, color: '#333' }}>{e.t} — {e.msg}</div>
+                    <div key={idx} style={{ fontSize: 12 }}>{e.t} — {e.msg}</div>
                   ))}
                 </div>
               </div>
@@ -701,8 +850,8 @@ export default function App() {
             <button onClick={() => setAttendanceType('out')} style={btnStyle(attendanceType === 'out')}>Check-out</button>
             <button onClick={() => setRunning((r) => !r)} style={primaryBtnStyle}>{running ? 'Stop' : 'Start'} Recognition</button>
             <button onClick={() => initCamera()} style={secondaryBtnStyle}>Retry Camera</button>
-          </div>
-        )}
+        </div>
+      )}
 
         {mode === 'register' && (
           <div style={{ display: 'grid', gap: 8, justifyItems: 'start' }}>
@@ -1080,7 +1229,7 @@ export default function App() {
                 const a = document.createElement('a'); a.href = url; a.download = 'attendance.csv'; a.click()
               }}>Export CSV</button>
               <button style={secondaryBtnStyle} onClick={() => {
-                const html = `<!doctype html><html><head><title>Attendance</title><style>body{font-family:system-ui,Arial,sans-serif;padding:16px}table{border-collapse:collapse;width:100%}th,td{border:1px solid #ddd;padding:6px;font-size:12px}</style></head><body><h3>Attendance ${historyStart||''} ${historyEnd?(' - '+historyEnd):''}</h3><table><thead><tr><th>Date</th><th>Name</th><th>Check-in</th><th>Check-out</th><th>Late</th><th>Early</th><th>Absent</th></tr></thead><tbody>${historyRows.map(r=>{const emp=employees.find(e=>e.id===r.employeeId);return `<tr><td>${r.date}</td><td>${r.employeeName||(emp?.name||r.employeeId)}</td><td>${r.checkIn?new Date(r.checkIn).toLocaleTimeString():''}</td><td>${r.checkOut?new Date(r.checkOut).toLocaleTimeString():''}</td><td>${r.late?'late':''}</td><td>${r.earlyLeave?'early':''}</td><td>${r.absent?'absent':''}</td></tr>`}).join('')}</tbody></table><script>window.print()</script></body></html>`
+              const html = `<!doctype html><html><head><title>Attendance</title><style>body{font-family:system-ui,Arial,sans-serif;padding:16px}table{border-collapse:collapse;width:100%}th,td{border:1px solid #ddd;padding:6px;font-size:12px}</style></head><body><h3>Attendance ${historyStart||''} ${historyEnd?(' - '+historyEnd):''}</h3><table><thead><tr><th>Date</th><th>Name</th><th>Check-in</th><th>Check-out</th><th>Late</th><th>Early</th><th>Absent</th></tr></thead><tbody>${historyRows.map(r=>{const emp=employees.find(e=>e.id===r.employeeId);return `<tr><td>${r.date}</td><td>${r.employeeName||(emp?.name||r.employeeId)}</td><td>${r.checkIn?new Date(r.checkIn).toLocaleTimeString():''}</td><td>${r.checkOut?new Date(r.checkOut).toLocaleTimeString():''}</td><td>${r.late?'late':''}</td><td>${r.earlyLeave?'early':''}</td><td>${r.absent?'absent':''}</td></tr>`}).join('')}</tbody></table><script>window.print()</script></body></html>`
                 const w = window.open('', '_blank'); if (w) { w.document.write(html); w.document.close() }
               }}>Print</button>
             </div>
@@ -1180,40 +1329,8 @@ export default function App() {
   )
 }
 
-function btnStyle(active) {
-  return {
-    padding: '8px 12px',
-    borderRadius: 6,
-    border: '1px solid #ddd',
-    background: active ? '#eef6ff' : '#fff',
-    color: '#222',
-    cursor: 'pointer'
-  }
-}
 
-const primaryBtnStyle = {
-  padding: '10px 14px',
-  borderRadius: 6,
-  border: '1px solid #2b6cb0',
-  background: '#2b6cb0',
-  color: '#fff',
-  cursor: 'pointer'
-}
-
-const secondaryBtnStyle = {
-  padding: '10px 14px',
-  borderRadius: 6,
-  border: '1px solid #ddd',
-  background: '#fff',
-  color: '#222',
-  cursor: 'pointer'
-}
-
-const thtd = {
-  border: '1px solid #eee', padding: '8px 10px', textAlign: 'left'
-}
-
-function Onboarding({ useBackend, setUseBackend, onCreated, onLoggedIn }) {
+function Onboarding({ useBackend, setUseBackend, onCreated, onLoggedIn, secondaryBtnStyle, primaryBtnStyle, palette }) {
   const [companyName, setCompanyName] = useState('')
   const [adminName, setAdminName] = useState('')
   const [adminEmail, setAdminEmail] = useState('')
@@ -1227,8 +1344,8 @@ function Onboarding({ useBackend, setUseBackend, onCreated, onLoggedIn }) {
         <h2 style={{ marginTop: 0 }}>Setup</h2>
         <div style={{ display: 'grid', gap: 8 }}>
           <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-            <span style={{ fontSize: 13, color: '#666' }}>Storage:</span>
-            <button style={secondaryBtnStyle} onClick={() => setUseBackend(b => !b)}>
+            <span style={{ fontSize: 13, color: (palette?.muted || '#666') }}>Storage:</span>
+            <button style={secondaryBtnStyle || { padding:'10px 14px', borderRadius:6, border:'1px solid #ddd', background:'#fff', color:'#222', cursor:'pointer' }} onClick={() => setUseBackend(b => !b)}>
               {useBackend ? 'Backend API' : 'Browser only'} (toggle)
             </button>
           </div>
@@ -1236,7 +1353,7 @@ function Onboarding({ useBackend, setUseBackend, onCreated, onLoggedIn }) {
           <input value={adminName} onChange={e => setAdminName(e.target.value)} placeholder="Admin name" style={{ padding: 8, border: '1px solid #ddd', borderRadius: 6 }} />
           <input value={adminEmail} onChange={e => setAdminEmail(e.target.value)} placeholder="Admin email" style={{ padding: 8, border: '1px solid #ddd', borderRadius: 6 }} />
           <input type="password" value={adminPassword} onChange={e => setAdminPassword(e.target.value)} placeholder="Admin password" style={{ padding: 8, border: '1px solid #ddd', borderRadius: 6 }} />
-          <button style={primaryBtnStyle} onClick={() => {
+          <button style={primaryBtnStyle || { padding:'10px 14px', borderRadius:6, border:'1px solid #2b6cb0', background:'#2b6cb0', color:'#fff', cursor:'pointer' }} onClick={() => {
             const name = companyName.trim() || 'Company'
             const admin = { name: adminName.trim() || 'Admin', email: adminEmail.trim() || '', password: adminPassword.trim() || 'admin' }
             setStatus('Creating company...')
@@ -1253,7 +1370,7 @@ function Onboarding({ useBackend, setUseBackend, onCreated, onLoggedIn }) {
               <div style={{ display: 'grid', gap: 8 }}>
                 <input value={adminEmail} onChange={e => setAdminEmail(e.target.value)} placeholder="Admin email" style={{ padding: 8, border: '1px solid #ddd', borderRadius: 6 }} />
                 <input type="password" value={adminPassword} onChange={e => setAdminPassword(e.target.value)} placeholder="Password" style={{ padding: 8, border: '1px solid #ddd', borderRadius: 6 }} />
-                <button style={secondaryBtnStyle} onClick={async () => {
+                <button style={secondaryBtnStyle || { padding:'10px 14px', borderRadius:6, border:'1px solid #ddd', background:'#fff', color:'#222', cursor:'pointer' }} onClick={async () => {
                   try {
                     const session = await loginRemote(null, adminEmail.trim(), adminPassword)
                     onLoggedIn(session)
@@ -1276,13 +1393,13 @@ function toTodayTime(hhmm) {
   return d
 }
 
-function AdminLogin({ company, adminEmail, adminPassword, setAdminEmail, setAdminPassword, onLoggedIn }) {
+function AdminLogin({ company, adminEmail, adminPassword, setAdminEmail, setAdminPassword, onLoggedIn, secondaryBtnStyle }) {
   const { push: pushSnack } = useSnackbar()
   return (
     <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 8 }}>
       <input value={adminEmail} onChange={e => setAdminEmail(e.target.value)} placeholder="Admin email" style={{ padding: 8, border: '1px solid #ddd', borderRadius: 6 }} />
       <input type="password" value={adminPassword} onChange={e => setAdminPassword(e.target.value)} placeholder="Password" style={{ padding: 8, border: '1px solid #ddd', borderRadius: 6 }} />
-      <button style={secondaryBtnStyle} onClick={async () => {
+      <button style={secondaryBtnStyle || { padding:'10px 14px', borderRadius:6, border:'1px solid #ddd', background:'#fff', color:'#222', cursor:'pointer' }} onClick={async () => {
         try {
           const session = await loginRemote(null, adminEmail, adminPassword)
           onLoggedIn(session)
