@@ -21,25 +21,22 @@
     "appId": "com.officattend.app",
     "productName": "OfficAttend",
     "copyright": "Copyright © 2024 OfficAttend",
+    "asar": false,
     "directories": {
       "output": "release"
     },
     "files": [
       "electron/**/*",
-      "!node_modules/**/*"
+      "node_modules/**/*",
+      "!node_modules/.cache/**/*",
+      "!node_modules/electron/**/*",
+      "!node_modules/electron-builder/**/*",
+      "!node_modules/@electron/**/*"
     ],
     "extraResources": [
       {
         "from": "dist",
         "to": "dist"
-      },
-      {
-        "from": "server",
-        "to": "server"
-      },
-      {
-        "from": "public/models",
-        "to": "dist/models"
       }
     ],
     "win": {
