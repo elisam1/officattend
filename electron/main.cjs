@@ -220,8 +220,8 @@ function createExpressServer() {
     if (!emp) return res.status(404).json({ error: 'employee_not_found' });
     if (req.body?.name) emp.name = req.body.name;
     if (req.body?.descriptor) emp.descriptor = req.body.descriptor;
-    if (req.body?.department !== undefined) emp.department = req.body.department;
-    if (req.body?.shift !== undefined) emp.shift = req.body.shift;
+    if (req.body && 'departmentId' in req.body) emp.departmentId = req.body.departmentId || null;
+    if (req.body && 'shiftId' in req.body) emp.shiftId = req.body.shiftId || null;
     write(data);
     res.json(emp);
   });

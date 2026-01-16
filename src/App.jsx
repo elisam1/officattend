@@ -830,9 +830,9 @@ export default function App() {
                   ))}
                 </div>
               </div>
-              <div style={{ padding: 10, border: `1px solid ${palette.border}`, borderRadius: 8, background: palette.card }}>
-                <div style={{ fontSize: 13, color: palette.muted, marginBottom: 6 }}>Logs</div>
-                <div style={{ display: 'grid', gap: 6 }}>
+              <div style={{ padding: 10, border: `1px solid ${palette.border}`, borderRadius: 8, background: palette.card, maxHeight: 150, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+                <div style={{ fontSize: 13, color: palette.muted, marginBottom: 6, flexShrink: 0 }}>Logs</div>
+                <div style={{ display: 'grid', gap: 6, overflowY: 'auto', flex: 1 }}>
                   {events.length === 0 && <div style={{ fontSize: 12, color: palette.muted }}>No events yet</div>}
                   {events.map((e,idx) => (
                     <div key={idx} style={{ fontSize: 12 }}>{e.t} — {e.msg}</div>
