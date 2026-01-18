@@ -39,6 +39,12 @@
 4. Use "Today" and "History" tabs to view records
 5. Export to CSV from History tab
 
+
+### Security Tips
+- Always log out after use to clear admin tokens from localStorage.
+- "Remember Me" stores your login token for convenience, but only on your device.
+- Data is never sent to third parties unless using backend mode.
+
 ### Troubleshooting
 - **Camera not working?** Allow camera permissions when prompted
 - **App won't start?** Make sure Node.js is installed: `node --version`

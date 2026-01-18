@@ -1,3 +1,30 @@
+// Change admin password
+app.post('/auth/change-password', authRequired, (req, res) => {
+  const { oldPassword, newPassword } = req.body || {};
+  if (!oldPassword || !newPassword) return res.status(400).json({ error: 'missing_fields' });
+  const data = read();
+  const c = getCompany(data, req.auth.companyId);
+  if (!c) return res.status(404).json({ error: 'company_not_found' });
+  const admin = (c.admins||[]).find(a => a.id === req.auth.adminId);
+  if (!admin) return res.status(404).json({ error: 'admin_not_found' });
+  let ok = false;
+  if (admin.passwordHash) {
+    ok = bcrypt.compareSync(oldPassword, admin.passwordHash);
+  } else if (admin.password) {
+    ok = (String(admin.password) === String(oldPassword));
+    if (ok) {
+      try {
+        admin.passwordHash = bcrypt.hashSync(String(admin.password), 10);
+        delete admin.password;
+        write(data);
+      } catch {}
+    }
+  }
+  if (!ok) return res.status(401).json({ error: 'invalid_old_password' });
+  admin.passwordHash = bcrypt.hashSync(newPassword, 10);
+  write(data);
+  res.json({ ok: true });
+});
 import express from 'express'
 import cors from 'cors'
 import fs from 'fs'

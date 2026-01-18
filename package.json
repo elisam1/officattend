@@ -1,6 +1,6 @@
 {
   "name": "officattend",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Face Recognition Attendance Tracking System",
   "private": true,
   "type": "module",
@@ -68,6 +68,8 @@
     "chart.js": "^4.5.1",
     "concurrently": "^8.2.2",
     "cors": "^2.8.5",
+    "electron-log": "^5.4.3",
+    "electron-updater": "^6.7.3",
     "express": "^5.1.0",
     "face-api.js": "^0.22.2",
     "jsonwebtoken": "^9.0.2",

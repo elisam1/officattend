@@ -2,6 +2,14 @@
 
 A lightweight face-recognition attendance tracking system with a React frontend and Express.js backend. Supports both local storage mode (browser-only) and backend mode for multi-user environments with CSV exports.
 
+
+## New Features (2026)
+
+- **Dark/Light Mode Toggle**: Switch themes anytime using the button at the top right.
+- **Remember Me**: Admin login now supports a "Remember Me" option to stay signed in.
+- **Change Admin Password**: Admins can change their password from the Admin tab (backend mode).
+- **Auto-Update (Electron)**: Desktop app checks for updates and notifies users automatically.
+
 ## Features
 
 ### Face Recognition
@@ -34,11 +42,12 @@ A lightweight face-recognition attendance tracking system with a React frontend 
 - Face alignment validation for optimal capture
 - 1.5-second cooldown between attendance marks
 
-## Requirements
-- Node.js 18+
-- Modern browser with camera support
 
-## Quick Start
+## Security Notes
+- Admin tokens and emails are stored in localStorage only when "Remember Me" is enabled and are cleared on logout.
+- Sensitive data (tokens, emails) is never stored longer than needed.
+- For best security, always log out after use, especially on shared computers.
+- Data in browser-only mode is stored locally and not synced to any server.
 
 ### 1) Install dependencies
 ```bash
@@ -60,16 +69,34 @@ npm run server
 - API runs at `http://localhost:3001`.
 - Data persists to `server/data.json`.
 
+
 ### 4) Start the frontend
 ```bash
 npm run dev
 ```
 - Open the app at `http://localhost:5173/`.
 
+### 5) Desktop App (Electron)
+To run as a desktop app with auto-update:
+```bash
+npm run electron:dev
+```
+Or build the installer:
+```bash
+npm run electron:build
+```
+Installer will be in `release/OfficAttend Setup 1.0.0.exe`.
+
 ### 5) Enable backend mode (optional)
 The app auto-detects backend availability via `/health`. If the backend is running, it will switch to server-backed data for company, employees, and attendance.
 
-## How It Works
+
+## How It Works (Key UI Features)
+
+- **Theme Toggle**: Click the 🌙/☀️ button in the top right to switch between dark and light mode.
+- **Remember Me**: On the admin login form, check "Remember Me" to stay signed in (uses localStorage).
+- **Change Password**: After logging in as admin (backend mode), use the "Change Password" form in the Admin tab.
+- **Auto-Update**: Electron app will check for updates and prompt you if a new version is available.
 
 ### Face Detection & Recognition
 1. **Detection**: TinyFaceDetector (default) or SSD Mobilenet scans each video frame

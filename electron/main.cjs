@@ -1,4 +1,23 @@
-const { app, BrowserWindow, Tray, Menu, dialog, session } = require('electron');
+// ===== AUTO-UPDATER =====
+const { app, BrowserWindow, Tray, Menu, dialog, session, ipcMain } = require('electron');
+const { autoUpdater } = require('electron-updater');
+const log = require('electron-log');
+autoUpdater.logger = log;
+autoUpdater.logger.transports.file.level = 'info';
+
+autoUpdater.on('update-available', () => {
+  if (mainWindow) mainWindow.webContents.send('update_available');
+});
+autoUpdater.on('update-downloaded', () => {
+  if (mainWindow) mainWindow.webContents.send('update_downloaded');
+});
+
+app.on('ready', () => {
+  // ...existing code...
+  if (!isDev) {
+    autoUpdater.checkForUpdatesAndNotify();
+  }
+});
 const path = require('path');
 const fs = require('fs');
 const http = require('http');
@@ -482,13 +501,37 @@ function createWindow() {
     mainWindow = null;
   });
 
-  mainWindow.on('close', (event) => {
+  mainWindow.on('close', async (event) => {
     if (!app.isQuitting) {
       event.preventDefault();
-      mainWindow.hide();
+      // Show exit confirmation dialog
+      const choice = dialog.showMessageBoxSync(mainWindow, {
+        type: 'question',
+        buttons: ['Exit', 'Cancel'],
+        defaultId: 1,
+        cancelId: 1,
+        title: 'Confirm Exit',
+        message: 'Are you sure you want to exit OfficAttend?'
+      });
+      if (choice === 0) { // Exit
+        app.isQuitting = true;
+        // Tell renderer to release camera before quitting
+        if (mainWindow && mainWindow.webContents) {
+          mainWindow.webContents.send('release-camera');
+        }
+        setTimeout(() => {
+          app.quit();
+        }, 300); // Give renderer time to release camera
+      } else {
+        // Cancel: do nothing
+      }
     }
   });
 }
+// Listen for camera release confirmation (optional, for future use)
+ipcMain.on('camera-released', () => {
+  // Could log or handle if needed
+});
 
 function createTray() {
   const iconPath = path.join(__dirname, 'icon.ico');
@@ -510,7 +553,7 @@ function showLoadingWindow() {
   const loading = new BrowserWindow({
     width: 400, height: 200,
     frame: false, transparent: true, alwaysOnTop: true,
-    webPreferences: { nodeIntegration: true, contextIsolation: false }
+    webPreferences: { nodeIntegration: false, contextIsolation: true }
   });
 
   loading.loadURL(`data:text/html,

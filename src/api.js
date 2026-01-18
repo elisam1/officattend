@@ -1,3 +1,16 @@
+export async function changeAdminPasswordRemote(oldPassword, newPassword) {
+  const r = await fetch(BASE + '/auth/change-password', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}) },
+    body: JSON.stringify({ oldPassword, newPassword })
+  });
+  if (!r.ok) {
+    let msg = 'Change password failed';
+    try { const e = await r.json(); msg = e.error || msg; } catch {}
+    throw new Error(msg);
+  }
+  return r.json();
+}
 const BASE = 'http://localhost:3001'
 let authToken = null
 export function setAuthToken(token) { authToken = token }

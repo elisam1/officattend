@@ -1,4 +1,12 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
+// Electron camera release support
+const isElectron = typeof window !== 'undefined' && window.require && window.require('electron');
+let electronIpcRenderer = null;
+if (isElectron) {
+  try {
+    electronIpcRenderer = window.require('electron').ipcRenderer;
+  } catch {}
+}
 import { useSnackbar } from './snackbar.jsx'
 import * as faceapi from 'face-api.js'
 import { createCompany, getSession, getCompany, addEmployee, listEmployees, recordAttendance, listTodayAttendance, serializeDescriptor, renameEmployee, deleteEmployee, setSchedule, setSession, listAttendanceRange } from './store.js'
@@ -184,7 +192,35 @@ export default function App() {
       procCanvasRef.current = document.createElement('canvas')
     })()
   }
-  useEffect(() => { initCamera() }, [])
+  useEffect(() => {
+    initCamera();
+    // Release camera on unload or Electron event
+    const cleanup = () => {
+      if (videoRef.current && videoRef.current.srcObject) {
+        const tracks = videoRef.current.srcObject.getTracks?.() || [];
+        tracks.forEach(track => track.stop());
+        videoRef.current.srcObject = null;
+      }
+      // Notify Electron main process if needed
+      if (electronIpcRenderer) {
+        electronIpcRenderer.send('camera-released');
+      }
+    };
+    window.addEventListener('beforeunload', cleanup);
+    window.addEventListener('unload', cleanup);
+    // Listen for Electron release-camera event
+    if (electronIpcRenderer) {
+      electronIpcRenderer.on('release-camera', cleanup);
+    }
+    return () => {
+      cleanup();
+      window.removeEventListener('beforeunload', cleanup);
+      window.removeEventListener('unload', cleanup);
+      if (electronIpcRenderer) {
+        electronIpcRenderer.removeListener('release-camera', cleanup);
+      }
+    };
+  }, []);
 
   // Update date/time every second
   useEffect(() => {
@@ -768,7 +804,7 @@ export default function App() {
 
   return (
     <div style={{ display: 'grid', gridTemplateRows: 'auto 1fr', minHeight: '100vh', background: palette.bg, color: palette.text }}>
-      <header style={{ padding: '12px 16px', borderBottom: `1px solid ${palette.border}`, background: palette.headerBg, display: 'flex', gap: 12, alignItems: 'center' }}>
+      <header style={{ padding: '12px 16px', borderBottom: `1px solid ${palette.border}`, background: palette.headerBg, display: 'flex', gap: 12, alignItems: 'center', position: 'relative' }}>
         <h1 style={{ margin: 0, fontSize: 18 }}>OfficAttend</h1>
         <nav style={{ display: 'flex', gap: 8 }}>
           <button onClick={() => setMode('attendance')} style={btnStyle(mode === 'attendance')}>Attendance</button>
@@ -781,7 +817,26 @@ export default function App() {
           <button onClick={() => setMode('admin')} style={btnStyle(mode === 'admin')}>Admin</button>
         </nav>
         <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8 }}>
-          <button onClick={() => setTheme(t => t === 'dark' ? 'light' : 'dark')} style={secondaryBtnStyle}>{theme === 'dark' ? 'Light' : 'Dark'} Mode</button>
+          <button
+            style={{
+              padding: '7px 14px',
+              borderRadius: 20,
+              border: `1px solid ${palette.buttonBorder}`,
+              background: palette.buttonBg,
+              color: palette.text,
+              cursor: 'pointer',
+              fontSize: 15,
+              boxShadow: '0 2px 8px rgba(0,0,0,0.04)',
+              display: 'flex',
+              alignItems: 'center',
+              gap: 8
+            }}
+            onClick={() => setTheme(t => t === 'dark' ? 'light' : 'dark')}
+            aria-label="Toggle dark/light mode"
+          >
+            {theme === 'dark' ? '🌙' : '☀️'}
+            {theme === 'dark' ? 'Dark' : 'Light'}
+          </button>
           <div style={{ fontSize: 13, color: palette.muted }}>{status}</div>
           <button onClick={handleLogout} style={secondaryBtnStyle}>Logout</button>
         </div>
@@ -1089,6 +1144,9 @@ export default function App() {
             {!adminToken && useBackend && (
               <AdminLogin company={company} adminEmail={adminEmail} adminPassword={adminPassword} setAdminEmail={setAdminEmail} setAdminPassword={setAdminPassword} onLoggedIn={async ({ token }) => { setAuthToken(token); setAdminToken(token); setStatus('Logged in as admin'); pushSnack('Logged in as admin', 'success') }} />
             )}
+            {adminToken && useBackend && (
+              <ChangePasswordForm />
+            )}
             <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
               <label>Check-in ends at:</label>
               <input type="time" value={schedInEnd} onChange={e => setSchedInEnd(e.target.value)} />
@@ -1319,6 +1377,13 @@ export default function App() {
           </div>
         )}
 
+        {!modelsLoaded && (['attendance','register'].includes(mode)) && (
+          <div style={{ marginTop: 16, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8 }}>
+            <div style={{ width: 32, height: 32, border: '4px solid #eee', borderTop: '4px solid #2563eb', borderRadius: '50%', animation: 'spin 1s linear infinite' }} />
+            <span style={{ fontSize: 14, color: '#b36b00' }}>Loading face recognition models...</span>
+            <style>{`@keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }`}</style>
+          </div>
+        )}
         {!modelsLoaded && !(['attendance','register'].includes(mode)) && (
           <p style={{ marginTop: 8, fontSize: 13, color: '#b36b00' }}>
             Note: Face models are not present. Add models under <code>public/models</code>.
@@ -1335,6 +1400,7 @@ function Onboarding({ useBackend, setUseBackend, onCreated, onLoggedIn, secondar
   const [adminName, setAdminName] = useState('')
   const [adminEmail, setAdminEmail] = useState('')
   const [adminPassword, setAdminPassword] = useState('')
+  const [showPassword, setShowPassword] = useState(false)
   const [status, setStatus] = useState('Create your company and first admin')
   const [companyIdToLogin, setCompanyIdToLogin] = useState('')
   const { push: pushSnack } = useSnackbar()
@@ -1352,7 +1418,10 @@ function Onboarding({ useBackend, setUseBackend, onCreated, onLoggedIn, secondar
           <input value={companyName} onChange={e => setCompanyName(e.target.value)} placeholder="Company name" style={{ padding: 8, border: '1px solid #ddd', borderRadius: 6 }} />
           <input value={adminName} onChange={e => setAdminName(e.target.value)} placeholder="Admin name" style={{ padding: 8, border: '1px solid #ddd', borderRadius: 6 }} />
           <input value={adminEmail} onChange={e => setAdminEmail(e.target.value)} placeholder="Admin email" style={{ padding: 8, border: '1px solid #ddd', borderRadius: 6 }} />
-          <input type="password" value={adminPassword} onChange={e => setAdminPassword(e.target.value)} placeholder="Admin password" style={{ padding: 8, border: '1px solid #ddd', borderRadius: 6 }} />
+          <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+            <input type={showPassword ? 'text' : 'password'} value={adminPassword} onChange={e => setAdminPassword(e.target.value)} placeholder="Admin password" style={{ padding: 8, border: '1px solid #ddd', borderRadius: 6, flex: 1 }} />
+            <button type="button" style={{ padding: '6px 8px', border: 'none', background: 'none', cursor: 'pointer' }} onClick={() => setShowPassword(v => !v)}>{showPassword ? 'Hide' : 'Show'}</button>
+          </div>
           <button style={primaryBtnStyle || { padding:'10px 14px', borderRadius:6, border:'1px solid #2b6cb0', background:'#2b6cb0', color:'#fff', cursor:'pointer' }} onClick={() => {
             const name = companyName.trim() || 'Company'
             const admin = { name: adminName.trim() || 'Admin', email: adminEmail.trim() || '', password: adminPassword.trim() || 'admin' }
@@ -1369,7 +1438,10 @@ function Onboarding({ useBackend, setUseBackend, onCreated, onLoggedIn, secondar
               <h3 style={{ margin: 0, fontSize: 16 }}>Login to existing company</h3>
               <div style={{ display: 'grid', gap: 8 }}>
                 <input value={adminEmail} onChange={e => setAdminEmail(e.target.value)} placeholder="Admin email" style={{ padding: 8, border: '1px solid #ddd', borderRadius: 6 }} />
-                <input type="password" value={adminPassword} onChange={e => setAdminPassword(e.target.value)} placeholder="Password" style={{ padding: 8, border: '1px solid #ddd', borderRadius: 6 }} />
+                <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                  <input type={showPassword ? 'text' : 'password'} value={adminPassword} onChange={e => setAdminPassword(e.target.value)} placeholder="Password" style={{ padding: 8, border: '1px solid #ddd', borderRadius: 6, flex: 1 }} />
+                  <button type="button" style={{ padding: '6px 8px', border: 'none', background: 'none', cursor: 'pointer' }} onClick={() => setShowPassword(v => !v)}>{showPassword ? 'Hide' : 'Show'}</button>
+                </div>
                 <button style={secondaryBtnStyle || { padding:'10px 14px', borderRadius:6, border:'1px solid #ddd', background:'#fff', color:'#222', cursor:'pointer' }} onClick={async () => {
                   try {
                     const session = await loginRemote(null, adminEmail.trim(), adminPassword)
@@ -1395,13 +1467,61 @@ function toTodayTime(hhmm) {
 
 function AdminLogin({ company, adminEmail, adminPassword, setAdminEmail, setAdminPassword, onLoggedIn, secondaryBtnStyle }) {
   const { push: pushSnack } = useSnackbar()
+  const [showPassword, setShowPassword] = useState(false)
+  const [rememberMe, setRememberMe] = useState(() => {
+    return window.localStorage.getItem('officattend_remember') === '1';
+  });
+  // Email autocomplete: load and update email list
+  const [emailOptions, setEmailOptions] = useState(() => {
+    try {
+      return JSON.parse(window.localStorage.getItem('officattend_admin_emails') || '[]')
+    } catch {
+      return []
+    }
+  });
+  // Add email to localStorage if login is successful
+  const addEmailOption = (email) => {
+    if (!email) return;
+    setEmailOptions(prev => {
+      if (prev.includes(email)) return prev;
+      const updated = [email, ...prev].slice(0, 10); // keep max 10
+      window.localStorage.setItem('officattend_admin_emails', JSON.stringify(updated));
+      return updated;
+    });
+  };
+  useEffect(() => {
+    if (rememberMe) window.localStorage.setItem('officattend_remember', '1');
+    else window.localStorage.removeItem('officattend_remember');
+  }, [rememberMe]);
   return (
     <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 8 }}>
-      <input value={adminEmail} onChange={e => setAdminEmail(e.target.value)} placeholder="Admin email" style={{ padding: 8, border: '1px solid #ddd', borderRadius: 6 }} />
-      <input type="password" value={adminPassword} onChange={e => setAdminPassword(e.target.value)} placeholder="Password" style={{ padding: 8, border: '1px solid #ddd', borderRadius: 6 }} />
+      <input
+        value={adminEmail}
+        onChange={e => setAdminEmail(e.target.value)}
+        placeholder="Admin email"
+        style={{ padding: 8, border: '1px solid #ddd', borderRadius: 6 }}
+        list="admin-email-list"
+        autoComplete="on"
+      />
+      <datalist id="admin-email-list">
+        {emailOptions.map(email => <option value={email} key={email} />)}
+      </datalist>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+        <input type={showPassword ? 'text' : 'password'} value={adminPassword} onChange={e => setAdminPassword(e.target.value)} placeholder="Password" style={{ padding: 8, border: '1px solid #ddd', borderRadius: 6, flex: 1 }} />
+        <button type="button" style={{ padding: '6px 8px', border: 'none', background: 'none', cursor: 'pointer' }} onClick={() => setShowPassword(v => !v)}>{showPassword ? 'Hide' : 'Show'}</button>
+      </div>
+      <label style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 13 }}>
+        <input type="checkbox" checked={rememberMe} onChange={e => setRememberMe(e.target.checked)} /> Remember Me
+      </label>
       <button style={secondaryBtnStyle || { padding:'10px 14px', borderRadius:6, border:'1px solid #ddd', background:'#fff', color:'#222', cursor:'pointer' }} onClick={async () => {
         try {
           const session = await loginRemote(null, adminEmail, adminPassword)
+          if (rememberMe && session?.token) {
+            window.localStorage.setItem('officattend_admin_token', session.token)
+          } else {
+            window.localStorage.removeItem('officattend_admin_token')
+          }
+          addEmailOption(adminEmail);
           onLoggedIn(session)
         } catch (e) { pushSnack('Login failed', 'error') }
       }}>Login</button>
