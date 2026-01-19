@@ -38,6 +38,10 @@ export default defineConfig({
   base: './',
   build: {
     outDir: 'dist',
-    assetsDir: 'assets'
+    assetsDir: 'assets',
+    sourcemap: true
+  },
+  optimizeDeps: {
+    exclude: ['electron']
   }
 })

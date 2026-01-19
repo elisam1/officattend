@@ -589,18 +589,21 @@ function setupPermissions() {
 
 app.whenReady().then(async () => {
   const loading = showLoadingWindow();
-
+  const splashMinTime = 1500;
+  const splashStart = Date.now();
   try {
     setupPermissions();
-    
     console.log('Starting embedded server...');
     await startServer();
     console.log('Server ready!');
-
+    // Wait for at least 1.5s splash
+    const elapsed = Date.now() - splashStart;
+    if (elapsed < splashMinTime) {
+      await new Promise(res => setTimeout(res, splashMinTime - elapsed));
+    }
     loading.close();
     createWindow();
     createTray();
-
   } catch (error) {
     console.error('Startup error:', error);
     loading.close();

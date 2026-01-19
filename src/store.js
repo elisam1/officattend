@@ -1,4 +1,4 @@
-const KEY = 'officattend_store_v1'
+var KEY = 'officattend_store_v1'
 
 function read() {
   const raw = localStorage.getItem(KEY)

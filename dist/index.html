@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <script>
+      window.addEventListener('error', function(event) {
+        var msg = event.message || event;
+        var div = document.createElement('div');
+        div.style.cssText = 'position:fixed;top:0;left:0;right:0;background:red;color:white;padding:20px;z-index:99999;white-space:pre-wrap;font-family:monospace;max-height:50vh;overflow:auto;';
+        div.innerText = 'Runtime Error:\n' + msg + '\nSource: ' + (event.filename || '') + ':' + (event.lineno || '');
+        document.body.appendChild(div);
+      });
+      window.addEventListener('unhandledrejection', function(event) {
+        var msg = event.reason ? (event.reason.message || event.reason) : event;
+        var div = document.createElement('div');
+        div.style.cssText = 'position:fixed;bottom:0;left:0;right:0;background:orange;color:black;padding:20px;z-index:99999;white-space:pre-wrap;font-family:monospace;max-height:50vh;overflow:auto;';
+        div.innerText = 'Unhandled Promise Rejection:\n' + msg;
+        document.body.appendChild(div);
+      });
+    </script>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>OfficAttend</title>
+    <style>
+      body { margin: 0; font-family: system-ui, Arial, sans-serif; }
+      #root { min-height: 100vh; }
+    </style>
+    <script type="module" crossorigin src="./assets/index-C4AvdAk-.js"></script>
+  </head>
+  <body>
+    <div id="root"></div>
+  <!-- Load OpenCV.js locally to avoid CDN blocking -->
+  <script src="./vendor/opencv.js" defer></script>
+  </body>
+</html>

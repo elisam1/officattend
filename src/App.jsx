@@ -1,4 +1,20 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
+import { exportToExcel } from './exportExcel.js'
+import { exportToPDF } from './exportPDF.js'
+import EmptyState from './EmptyState.jsx'
+import { useSnackbar } from './snackbar.jsx'
+import Spinner from './Spinner.jsx'
+import * as faceapi from 'face-api.js'
+import { createCompany, getSession, getCompany, addEmployee, listEmployees, recordAttendance, listTodayAttendance, serializeDescriptor, renameEmployee, deleteEmployee, setSchedule, setSession, listAttendanceRange } from './store.js'
+import { health, createCompanyRemote, getCompanyRemote, addEmployeeRemote, listEmployeesRemote, recordAttendanceRemote, listTodayAttendanceRemote, renameEmployeeRemote, deleteEmployeeRemote, updateSettingsRemote, csvUrl, loginRemote, listAttendanceRangeRemote, closeDayRemote, setAuthToken, listDepartmentsRemote, createDepartmentRemote, deleteDepartmentRemote, listShiftsRemote, createShiftRemote, deleteShiftRemote, updateEmployeeRemote } from './api.js'
+import { Bar, Line } from 'react-chartjs-2'
+import { Chart as ChartJS, BarElement, CategoryScale, LinearScale, PointElement, LineElement, Tooltip, Legend } from 'chart.js'
+import Avatar from './Avatar.jsx'
+import SettingsPanel from './SettingsPanel.jsx'
+import OnboardingTour from './OnboardingTour.jsx'
+
+ChartJS.register(BarElement, CategoryScale, LinearScale, PointElement, LineElement, Tooltip, Legend)
+
 // Electron camera release support
 const isElectron = typeof window !== 'undefined' && window.require && window.require('electron');
 let electronIpcRenderer = null;
@@ -7,20 +23,91 @@ if (isElectron) {
     electronIpcRenderer = window.require('electron').ipcRenderer;
   } catch {}
 }
-import { useSnackbar } from './snackbar.jsx'
-import * as faceapi from 'face-api.js'
-import { createCompany, getSession, getCompany, addEmployee, listEmployees, recordAttendance, listTodayAttendance, serializeDescriptor, renameEmployee, deleteEmployee, setSchedule, setSession, listAttendanceRange } from './store.js'
-import { health, createCompanyRemote, getCompanyRemote, addEmployeeRemote, listEmployeesRemote, recordAttendanceRemote, listTodayAttendanceRemote, renameEmployeeRemote, deleteEmployeeRemote, updateSettingsRemote, csvUrl, loginRemote, listAttendanceRangeRemote, closeDayRemote, setAuthToken, listDepartmentsRemote, createDepartmentRemote, deleteDepartmentRemote, listShiftsRemote, createShiftRemote, deleteShiftRemote, updateEmployeeRemote } from './api.js'
-import { Bar, Line } from 'react-chartjs-2'
-import { Chart as ChartJS, BarElement, CategoryScale, LinearScale, PointElement, LineElement, Tooltip, Legend } from 'chart.js'
-ChartJS.register(BarElement, CategoryScale, LinearScale, PointElement, LineElement, Tooltip, Legend)
+
+// Show a desktop notification if supported
+function notify(title, body) {
+  if (window.Notification && Notification.permission === 'granted') {
+    new Notification(title, { body });
+  } else if (window.Notification && Notification.permission !== 'denied') {
+    Notification.requestPermission().then(permission => {
+      if (permission === 'granted') {
+        new Notification(title, { body });
+      }
+    });
+  }
+}
+// Speak a message aloud using Web Speech API
+function speak(text) {
+  if (window.speechSynthesis) {
+    const utter = new window.SpeechSynthesisUtterance(text);
+    utter.rate = 1.05;
+    utter.pitch = 1.0;
+    window.speechSynthesis.speak(utter);
+  }
+}
+
+// Simple reusable confirmation modal
+function ConfirmModal({ open, title, message, onConfirm, onCancel, confirmText = 'Yes', cancelText = 'Cancel' }) {
+  if (!open) return null;
+  return (
+    <div style={{
+      position: 'fixed', top: 0, left: 0, width: '100vw', height: '100vh',
+      background: 'rgba(0,0,0,0.18)', zIndex: 10001, display: 'flex', alignItems: 'center', justifyContent: 'center'
+    }} role="dialog" aria-modal="true" aria-labelledby="confirm-title">
+      <div style={{ background: '#fff', borderRadius: 10, boxShadow: '0 4px 32px #0002', padding: 28, minWidth: 320, maxWidth: '90vw', display: 'grid', gap: 18 }}>
+        <div id="confirm-title" style={{ fontWeight: 600, fontSize: 18 }}>{title}</div>
+        <div style={{ fontSize: 15 }}>{message}</div>
+        <div style={{ display: 'flex', gap: 12, justifyContent: 'flex-end' }}>
+          <button onClick={onCancel} style={{ padding: '8px 18px', borderRadius: 6, border: '1px solid #bbb', background: '#f5f5f5', color: '#333', cursor: 'pointer' }}>{cancelText}</button>
+          <button onClick={onConfirm} style={{ padding: '8px 18px', borderRadius: 6, border: '1px solid #b00', background: '#e33', color: '#fff', cursor: 'pointer', fontWeight: 500 }}>{confirmText}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 export default function App() {
+          // Confirmation modal state
+          const [confirmModal, setConfirmModal] = useState({ open: false, onConfirm: null, title: '', message: '', confirmText: '', cancelText: '' });
+        // Settings panel state
+        const [showSettings, setShowSettings] = useState(false);
+        const [language, setLanguage] = useState('en');
+        const [cameraList, setCameraList] = useState([]);
+        const [selectedCamera, setSelectedCamera] = useState('');
+
+        // Detect cameras on mount
+        useEffect(() => {
+          async function fetchCameras() {
+            try {
+              const devices = await navigator.mediaDevices.enumerateDevices();
+              const cams = devices.filter(d => d.kind === 'videoinput');
+              setCameraList(cams);
+              if (cams.length && !selectedCamera) setSelectedCamera(cams[0].deviceId);
+            } catch {}
+          }
+          fetchCameras();
+        }, []);
+      // Loading states
+      const [modelsLoaded, setModelsLoaded] = useState(false)
+      const [ssdLoaded, setSsdLoaded] = useState(false)
+      const [showModelSpinner, setShowModelSpinner] = useState(true);
+      const [showCameraSpinner, setShowCameraSpinner] = useState(false);
+      // Show spinner while models load
+      useEffect(() => {
+        if (!modelsLoaded) setShowModelSpinner(true);
+        else setTimeout(() => setShowModelSpinner(false), 500);
+      }, [modelsLoaded]);
+    // Onboarding tour state
+    const [showTour, setShowTour] = useState(() => {
+      return window.localStorage.getItem('officattend_tour_shown') !== '1';
+    });
+    const handleTourClose = () => {
+      setShowTour(false);
+      window.localStorage.setItem('officattend_tour_shown', '1');
+    };
   const [mode, setMode] = useState('attendance')
   const [status, setStatus] = useState('Loading...')
   const { push: pushSnack } = useSnackbar()
-  const [modelsLoaded, setModelsLoaded] = useState(false)
-  const [ssdLoaded, setSsdLoaded] = useState(false)
   const [running, setRunning] = useState(false)
   const [detector, setDetector] = useState('tiny')
   const lastBoxRef = useRef(null)
@@ -156,6 +243,7 @@ export default function App() {
 
   function initCamera() {
     async function tryStart(constraints) {
+      setShowCameraSpinner(true);
       const stream = await navigator.mediaDevices.getUserMedia(constraints)
       if (videoRef.current) {
         videoRef.current.srcObject = stream
@@ -163,6 +251,7 @@ export default function App() {
       }
       setStatus('Camera ready')
       pushSnack('Camera ready', 'success')
+      setShowCameraSpinner(false);
     }
     (async () => {
       try {
@@ -613,6 +702,8 @@ export default function App() {
                 setStatus(`${emp.name} checked in at ${new Date(now).toLocaleTimeString()}`)
                 setEvents(ev => [{ t: new Date().toLocaleTimeString(), msg: `Attendance recorded: ${emp.name} (Check-In)` }, ...ev].slice(0,50))
                 pushSnack(`${emp.name} checked in`, 'success')
+                speak(`Attendance marked for ${emp.name}`)
+                notify('Attendance Marked', `${emp.name} checked in`)
               } catch (err) {
                 console.error('Check-in failed:', err)
                 setStatus(`Check-in failed for ${emp.name}`)
@@ -637,6 +728,8 @@ export default function App() {
                 setStatus(`${emp.name} checked out at ${new Date(now).toLocaleTimeString()}`)
                 setEvents(ev => [{ t: new Date().toLocaleTimeString(), msg: `Departure recorded: ${emp.name} (Check-Out)` }, ...ev].slice(0,50))
                 pushSnack(`${emp.name} checked out`, 'success')
+                speak(`Attendance marked for ${emp.name}`)
+                notify('Attendance Marked', `${emp.name} checked out`)
               } catch (err) {
                 console.error('Check-out failed:', err)
                 setStatus(`Check-out failed for ${emp.name}`)
@@ -803,18 +896,32 @@ export default function App() {
   }
 
   return (
-    <div style={{ display: 'grid', gridTemplateRows: 'auto 1fr', minHeight: '100vh', background: palette.bg, color: palette.text }}>
-      <header style={{ padding: '12px 16px', borderBottom: `1px solid ${palette.border}`, background: palette.headerBg, display: 'flex', gap: 12, alignItems: 'center', position: 'relative' }}>
-        <h1 style={{ margin: 0, fontSize: 18 }}>OfficAttend</h1>
-        <nav style={{ display: 'flex', gap: 8 }}>
-          <button onClick={() => setMode('attendance')} style={btnStyle(mode === 'attendance')}>Attendance</button>
-          <button onClick={() => setMode('register')} style={btnStyle(mode === 'register')}>Register</button>
-          <button onClick={() => setMode('records')} style={btnStyle(mode === 'records')}>Today</button>
-          <button onClick={() => setMode('history')} style={btnStyle(mode === 'history')}>History</button>
-          <button onClick={() => setMode('dashboard')} style={btnStyle(mode === 'dashboard')}>Dashboard</button>
-          <button onClick={() => setMode('print')} style={btnStyle(mode === 'print')}>Print</button>
-          <button onClick={() => setMode('employees')} style={btnStyle(mode === 'employees')}>Employees</button>
-          <button onClick={() => setMode('admin')} style={btnStyle(mode === 'admin')}>Admin</button>
+    <>
+      <ConfirmModal {...confirmModal} />
+      <div
+        style={{
+          display: 'grid',
+          gridTemplateRows: 'auto 1fr',
+          minHeight: '100vh',
+          background: palette.bg,
+          color: palette.text
+        }}
+        role="application"
+        aria-label="OfficAttend Attendance System"
+      >
+      <OnboardingTour open={showTour} onClose={handleTourClose} />
+      <header style={{ padding: '12px 16px', borderBottom: `1px solid ${palette.border}`, background: palette.headerBg, display: 'flex', gap: 12, alignItems: 'center', position: 'relative' }} role="banner">
+        <h1 style={{ margin: 0, fontSize: 18 }} tabIndex={0}>OfficAttend</h1>
+        <button onClick={() => setShowTour(true)} style={{ position: 'absolute', right: 16, top: 16, zIndex: 10, background: 'none', border: 'none', color: palette.primary, cursor: 'pointer', fontSize: 14 }} aria-label="Show onboarding tour">❓ Tour</button>
+        <nav style={{ display: 'flex', gap: 8 }} aria-label="Main navigation">
+          <button onClick={() => setMode('attendance')} style={btnStyle(mode === 'attendance')} aria-current={mode === 'attendance'} tabIndex={0}>Attendance</button>
+          <button onClick={() => setMode('register')} style={btnStyle(mode === 'register')} aria-current={mode === 'register'} tabIndex={0}>Register</button>
+          <button onClick={() => setMode('records')} style={btnStyle(mode === 'records')} aria-current={mode === 'records'} tabIndex={0}>Today</button>
+          <button onClick={() => setMode('history')} style={btnStyle(mode === 'history')} aria-current={mode === 'history'} tabIndex={0}>History</button>
+          <button onClick={() => setMode('dashboard')} style={btnStyle(mode === 'dashboard')} aria-current={mode === 'dashboard'} tabIndex={0}>Dashboard</button>
+          <button onClick={() => setMode('print')} style={btnStyle(mode === 'print')} aria-current={mode === 'print'} tabIndex={0}>Print</button>
+          <button onClick={() => setMode('employees')} style={btnStyle(mode === 'employees')} aria-current={mode === 'employees'} tabIndex={0}>Employees</button>
+          <button onClick={() => setMode('admin')} style={btnStyle(mode === 'admin')} aria-current={mode === 'admin'} tabIndex={0}>Admin</button>
         </nav>
         <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8 }}>
           <button
@@ -837,18 +944,81 @@ export default function App() {
             {theme === 'dark' ? '🌙' : '☀️'}
             {theme === 'dark' ? 'Dark' : 'Light'}
           </button>
+          <button
+            style={{
+              padding: '7px 14px',
+              borderRadius: 20,
+              border: `1px solid ${palette.buttonBorder}`,
+              background: palette.buttonBg,
+              color: palette.text,
+              cursor: 'pointer',
+              fontSize: 15,
+              boxShadow: '0 2px 8px rgba(0,0,0,0.04)',
+              display: 'flex',
+              alignItems: 'center',
+              gap: 8
+            }}
+            onClick={() => setShowSettings(true)}
+            aria-label="Open settings panel"
+          >
+            ⚙️ Settings
+          </button>
+                {showSettings && (
+                  <SettingsPanel
+                    theme={theme}
+                    setTheme={setTheme}
+                    cameraList={cameraList}
+                    selectedCamera={selectedCamera}
+                    setSelectedCamera={setSelectedCamera}
+                    language={language}
+                    setLanguage={setLanguage}
+                    onClose={() => setShowSettings(false)}
+                  />
+                )}
           <div style={{ fontSize: 13, color: palette.muted }}>{status}</div>
           <button onClick={handleLogout} style={secondaryBtnStyle}>Logout</button>
         </div>
       </header>
-      <main style={{ display: 'grid', placeItems: 'center', padding: 16, gap: 16 }}>
-        {['attendance','register'].includes(mode) && (
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 340px', gap: 16, alignItems: 'start', width: '100%', maxWidth: 1040 }}>
-            <div style={{ position: 'relative', width: '100%' }}>
+      <main
+        style={{
+          display: 'grid',
+          placeItems: 'center',
+          padding: 16,
+          gap: 16,
+        }}
+        role="main"
+        tabIndex={0}
+        aria-label="Main content"
+      >
+        {showModelSpinner && (
+          <div style={{ position: 'fixed', top: 0, left: 0, width: '100vw', height: '100vh', background: 'rgba(0,0,0,0.18)', zIndex: 10000, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <Spinner size={60} color={palette.primary} />
+            <span style={{ marginLeft: 18, color: palette.primary, fontWeight: 500, fontSize: 18 }}>Loading models...</span>
+          </div>
+        )}
+        {showCameraSpinner && (
+          <div style={{ position: 'fixed', top: 0, left: 0, width: '100vw', height: '100vh', background: 'rgba(0,0,0,0.10)', zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <Spinner size={48} color={palette.primary} />
+            <span style={{ marginLeft: 14, color: palette.primary, fontWeight: 500, fontSize: 16 }}>Starting camera...</span>
+          </div>
+        )}
+        {['attendance', 'register'].includes(mode) && (
+          <div
+            style={{
+              display: 'flex',
+              flexDirection: 'row',
+              flexWrap: 'wrap',
+              gap: 16,
+              alignItems: 'flex-start',
+              width: '100%',
+              maxWidth: 1040,
+            }}
+          >
+            <div style={{ position: 'relative', width: '100%', maxWidth: 720, flex: '2 1 320px', minWidth: 240 }}>
               <video ref={videoRef} width={720} height={405} style={{ width: '100%', background: '#000', borderRadius: 8 }} autoPlay muted playsInline />
               <canvas ref={canvasRef} width={720} height={405} style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', borderRadius: 8, pointerEvents: 'none', zIndex: 2 }} />
             </div>
-            <div style={{ display: 'grid', gap: 8 }}>
+            <div style={{ display: 'grid', gap: 8, flex: '1 1 280px', minWidth: 220, maxWidth: 340 }}>
               <div style={{ padding: 10, border: `1px solid ${palette.border}`, borderRadius: 8, background: palette.card }}>
                 <div style={{ fontSize: 13, color: palette.muted }}>Status</div>
                 <div style={{ fontSize: 14 }}>{status}</div>
@@ -1022,16 +1192,17 @@ export default function App() {
               <tbody>
                 {todayRows.map(r => {
                   const emp = employees.find(e => e.id === r.employeeId)
+                  const name = r.employeeName || (emp?.name || r.employeeId)
                   return (
                     <tr key={r.id}>
-                      <td style={thtd}>{r.employeeName || (emp?.name || r.employeeId)}</td>
+                      <td style={{...thtd, display:'flex',alignItems:'center',gap:8}}><Avatar name={name} size={20} />{name}</td>
                       <td style={thtd}>{r.checkIn ? new Date(r.checkIn).toLocaleTimeString() : '-'}</td>
                       <td style={thtd}>{r.checkOut ? new Date(r.checkOut).toLocaleTimeString() : '-'}</td>
                     </tr>
                   )
                 })}
                 {todayRows.length === 0 && (
-                  <tr><td style={thtd} colSpan={3}>No records yet</td></tr>
+                  <tr><td style={thtd} colSpan={3}><EmptyState label="No attendance records yet" /></td></tr>
                 )}
               </tbody>
             </table>
@@ -1050,6 +1221,29 @@ export default function App() {
                   const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = 'attendance_today.csv'; a.click(); URL.revokeObjectURL(url)
                 }
               }}>Export CSV</button>
+              <button style={secondaryBtnStyle} onClick={() => {
+                const rows = todayRows.map(r => {
+                  const emp = employees.find(e => e.id === r.employeeId)
+                  return [r.date, (r.employeeName || (emp?.name || r.employeeId)), r.checkIn ? new Date(r.checkIn).toLocaleTimeString() : '', r.checkOut ? new Date(r.checkOut).toLocaleTimeString() : '']
+                })
+                exportToExcel({
+                  rows,
+                  headers: ['Date','Name','CheckIn','CheckOut'],
+                  filename: 'attendance_today.xlsx'
+                })
+              }}>Export Excel</button>
+              <button style={secondaryBtnStyle} onClick={() => {
+                const rows = todayRows.map(r => {
+                  const emp = employees.find(e => e.id === r.employeeId)
+                  return [r.date, (r.employeeName || (emp?.name || r.employeeId)), r.checkIn ? new Date(r.checkIn).toLocaleTimeString() : '', r.checkOut ? new Date(r.checkOut).toLocaleTimeString() : '']
+                })
+                exportToPDF({
+                  rows,
+                  headers: ['Date','Name','CheckIn','CheckOut'],
+                  filename: 'attendance_today.pdf',
+                  title: 'Today Attendance'
+                })
+              }}>Export PDF</button>
             </div>
           </div>
         )}
@@ -1072,7 +1266,7 @@ export default function App() {
               <tbody>
                 {employees.map(e => (
                   <tr key={e.id}>
-                    <td style={thtd}>{e.name}</td>
+                    <td style={{...thtd, display:'flex',alignItems:'center',gap:8}}><Avatar name={e.name} size={24} />{e.name}</td>
                     <td style={thtd}>
                       {useBackend ? (
                         <select value={e.departmentId || ''} onChange={async (ev) => {
@@ -1115,23 +1309,33 @@ export default function App() {
                         }
                         pushSnack('Employee renamed', 'success')
                       }}>Rename</button>
-                      <button style={{ ...secondaryBtnStyle, marginLeft: 8 }} onClick={async () => {
-                        if (!confirm('Remove employee?')) return
-                        if (useBackend) {
-                          if (!adminToken) { setStatus('Admin login required'); pushSnack('Admin login required', 'error'); return }
-                          await deleteEmployeeRemote(company.id, e.id)
-                          setCompany(await getCompanyRemote(company.id))
-                        } else {
-                          deleteEmployee(company.id, e.id)
-                          setCompany(getCompany(company.id))
-                        }
-                        pushSnack('Employee removed', 'success')
+                      <button style={{ ...secondaryBtnStyle, marginLeft: 8 }} onClick={() => {
+                        setConfirmModal({
+                          open: true,
+                          title: 'Remove Employee',
+                          message: `Are you sure you want to remove ${e.name}? This cannot be undone.`,
+                          confirmText: 'Remove',
+                          cancelText: 'Cancel',
+                          onConfirm: async () => {
+                            setConfirmModal(m => ({ ...m, open: false }));
+                            if (useBackend) {
+                              if (!adminToken) { setStatus('Admin login required'); pushSnack('Admin login required', 'error'); return }
+                              await deleteEmployeeRemote(company.id, e.id)
+                              setCompany(await getCompanyRemote(company.id))
+                            } else {
+                              deleteEmployee(company.id, e.id)
+                              setCompany(getCompany(company.id))
+                            }
+                            pushSnack('Employee removed', 'success')
+                          },
+                          onCancel: () => setConfirmModal(m => ({ ...m, open: false })),
+                        });
                       }}>Remove</button>
                     </td>
                   </tr>
                 ))}
                 {employees.length === 0 && (
-                  <tr><td style={thtd} colSpan={4}>No employees yet</td></tr>
+                  <tr><td style={thtd} colSpan={4}><EmptyState label="No employees yet" /></td></tr>
                 )}
               </tbody>
             </table>
@@ -1183,10 +1387,28 @@ export default function App() {
                 if (autoTimer) { clearInterval(autoTimer); setAutoTimer(null) }
                 setRunning(false); setStatus('Day ended'); pushSnack('Day ended', 'info')
               }}>End Day</button>
-              <button style={secondaryBtnStyle} onClick={async () => {
-                if (useBackend) { if (!adminToken) { setStatus('Admin login required'); pushSnack('Admin login required', 'error'); return } await closeDayRemote(company.id) ; setCompany(await getCompanyRemote(company.id)) }
-                else { closeDayLocal(company.id); setCompany(getCompany(company.id)) }
-                setStatus('Absences marked for today'); pushSnack('Absences marked for today', 'success')
+              <button style={secondaryBtnStyle} onClick={() => {
+                setConfirmModal({
+                  open: true,
+                  title: 'Mark Absences for Today',
+                  message: 'Are you sure you want to close the day and mark absences for all employees who did not check in? This cannot be undone.',
+                  confirmText: 'Mark Absences',
+                  cancelText: 'Cancel',
+                  onConfirm: async () => {
+                    setConfirmModal(m => ({ ...m, open: false }));
+                    if (useBackend) {
+                      if (!adminToken) { setStatus('Admin login required'); pushSnack('Admin login required', 'error'); return }
+                      await closeDayRemote(company.id);
+                      setCompany(await getCompanyRemote(company.id));
+                    } else {
+                      closeDayLocal(company.id);
+                      setCompany(getCompany(company.id));
+                    }
+                    setStatus('Absences marked for today');
+                    pushSnack('Absences marked for today', 'success');
+                  },
+                  onCancel: () => setConfirmModal(m => ({ ...m, open: false })),
+                });
               }}>Close Day (mark absences)</button>
             </div>
             <div>
@@ -1215,15 +1437,26 @@ export default function App() {
                   {departments.map(d => (
                     <li key={d.id} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                       <span>{d.name}</span>
-                      <button style={secondaryBtnStyle} onClick={async () => {
-                        if (!adminToken) { setStatus('Admin login required'); return }
-                        await deleteDepartmentRemote(company.id, d.id)
-                        setDepartments(await listDepartmentsRemote(company.id))
-                        pushSnack('Department deleted', 'success')
+                      <button style={secondaryBtnStyle} onClick={() => {
+                        setConfirmModal({
+                          open: true,
+                          title: 'Delete Department',
+                          message: `Are you sure you want to delete the department "${d.name}"? This cannot be undone.`,
+                          confirmText: 'Delete',
+                          cancelText: 'Cancel',
+                          onConfirm: async () => {
+                            setConfirmModal(m => ({ ...m, open: false }));
+                            if (!adminToken) { setStatus('Admin login required'); return; }
+                            await deleteDepartmentRemote(company.id, d.id);
+                            setDepartments(await listDepartmentsRemote(company.id));
+                            pushSnack('Department deleted', 'success');
+                          },
+                          onCancel: () => setConfirmModal(m => ({ ...m, open: false })),
+                        });
                       }}>Delete</button>
                     </li>
                   ))}
-                  {departments.length === 0 && <li style={{ color: '#999' }}>(none)</li>}
+                  {departments.length === 0 && <li><EmptyState label="No departments" style={{padding:12}} /></li>}
                 </ul>
 
                 <h4 style={{ margin: '8px 0' }}>Shifts</h4>
@@ -1250,15 +1483,26 @@ export default function App() {
                   {shifts.map(s => (
                     <li key={s.id} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                       <span>{s.name} — in ≤ {s.schedule?.checkInEnd} | out ≥ {s.schedule?.checkOutStart}</span>
-                      <button style={secondaryBtnStyle} onClick={async () => {
-                        if (!adminToken) { setStatus('Admin login required'); return }
-                        await deleteShiftRemote(company.id, s.id)
-                        setShifts(await listShiftsRemote(company.id))
-                        pushSnack('Shift deleted', 'success')
+                      <button style={secondaryBtnStyle} onClick={() => {
+                        setConfirmModal({
+                          open: true,
+                          title: 'Delete Shift',
+                          message: `Are you sure you want to delete the shift "${s.name}"? This cannot be undone.`,
+                          confirmText: 'Delete',
+                          cancelText: 'Cancel',
+                          onConfirm: async () => {
+                            setConfirmModal(m => ({ ...m, open: false }));
+                            if (!adminToken) { setStatus('Admin login required'); return; }
+                            await deleteShiftRemote(company.id, s.id);
+                            setShifts(await listShiftsRemote(company.id));
+                            pushSnack('Shift deleted', 'success');
+                          },
+                          onCancel: () => setConfirmModal(m => ({ ...m, open: false })),
+                        });
                       }}>Delete</button>
                     </li>
                   ))}
-                  {shifts.length === 0 && <li style={{ color: '#999' }}>(none)</li>}
+                  {shifts.length === 0 && <li><EmptyState label="No shifts" style={{padding:12}} /></li>}
                 </ul>
               </div>
             )}
@@ -1306,10 +1550,11 @@ export default function App() {
               <tbody>
                 {historyRows.map(r => {
                   const emp = employees.find(e => e.id === r.employeeId)
+                  const name = r.employeeName || (emp?.name || r.employeeId)
                   return (
                     <tr key={r.id}>
                       <td style={thtd}>{r.date}</td>
-                      <td style={thtd}>{r.employeeName || (emp?.name || r.employeeId)}</td>
+                      <td style={{...thtd, display:'flex',alignItems:'center',gap:8}}><Avatar name={name} size={18} />{name}</td>
                       <td style={thtd}>{r.checkIn ? new Date(r.checkIn).toLocaleTimeString() : '-'}</td>
                       <td style={thtd}>{r.checkOut ? new Date(r.checkOut).toLocaleTimeString() : '-'}</td>
                       <td style={thtd}>{r.late ? 'late' : ''}</td>
@@ -1318,7 +1563,7 @@ export default function App() {
                     </tr>
                   )
                 })}
-                {historyRows.length === 0 && (<tr><td style={thtd} colSpan={7}>No records</td></tr>)}
+                {historyRows.length === 0 && (<tr><td style={thtd} colSpan={7}><EmptyState label="No history records" /></td></tr>)}
               </tbody>
             </table>
           </div>
@@ -1391,6 +1636,7 @@ export default function App() {
         )}
       </main>
     </div>
+    </>
   )
 }
 
@@ -1446,7 +1692,7 @@ function Onboarding({ useBackend, setUseBackend, onCreated, onLoggedIn, secondar
                   try {
                     const session = await loginRemote(null, adminEmail.trim(), adminPassword)
                     onLoggedIn(session)
-                  } catch (e) { setStatus(String(e.message||'Login failed')); pushSnack('Login failed', 'error') }
+                  } catch (e) { setStatus('' + e.message); pushSnack('Login failed', 'error') }
                 }}>Login</button>
               </div>
             </div>
@@ -1474,7 +1720,7 @@ function AdminLogin({ company, adminEmail, adminPassword, setAdminEmail, setAdmi
   // Email autocomplete: load and update email list
   const [emailOptions, setEmailOptions] = useState(() => {
     try {
-      return JSON.parse(window.localStorage.getItem('officattend_admin_emails') || '[]')
+      return JSON.parse(window.localStorage.getItem('officattend_admin_emails' )|| '[]')
     } catch {
       return []
     }

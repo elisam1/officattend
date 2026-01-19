@@ -1,3 +1,7 @@
+var BASE = 'http://localhost:3001'
+var authToken = null
+export function setAuthToken(token) { authToken = token }
+
 export async function changeAdminPasswordRemote(oldPassword, newPassword) {
   const r = await fetch(BASE + '/auth/change-password', {
     method: 'POST',
@@ -11,9 +15,6 @@ export async function changeAdminPasswordRemote(oldPassword, newPassword) {
   }
   return r.json();
 }
-const BASE = 'http://localhost:3001'
-let authToken = null
-export function setAuthToken(token) { authToken = token }
 
 export async function health() {
   try { const r = await fetch(BASE + '/health'); return r.ok } catch { return false }

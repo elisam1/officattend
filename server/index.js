@@ -309,6 +309,7 @@ const PORT = process.env.PORT || 3001
 app.listen(PORT, () => {
   console.log(`API server running at http://localhost:${PORT}`)
 })
+
 // Close day: mark absentees
 app.post('/company/:id/attendance/closeDay', authRequired, (req, res) => {
   const data = read()
@@ -355,6 +356,3 @@ app.delete('/company/:id/shifts/:shiftId', authRequired, (req, res) => {
   const data = read(); const c = getCompany(data, req.params.id); if (!c) return res.status(404).json({ error:'not_found' });
   c.shifts = (c.shifts||[]).filter(s => s.id !== req.params.shiftId); write(data); res.json({ ok:true })
 })
-
-const PORT = process.env.PORT || 3001
-app.listen(PORT, () => console.log(`Server running on port ${PORT}`))
